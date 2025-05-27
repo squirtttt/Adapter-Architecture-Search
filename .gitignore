@@ -1,0 +1,5 @@
+# dataset ignore
+load/
+
+# pretrained model ignore
+pretrained/
