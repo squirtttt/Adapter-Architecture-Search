@@ -114,6 +114,7 @@ search:
   epoch_search_max: 10000
   search_proxy: zico # zenscore, naswot
   population_size: 512
+  patient: 10
   search_space:
     scale_factor:
     - 16

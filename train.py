@@ -153,7 +153,7 @@ def main(config_, save_path, args):
             'inp': {'sub': [0], 'div': [1]},
             'gt': {'sub': [0], 'div': [1]}
         }
-
+         
     model, optimizer, epoch_start, lr_scheduler = prepare_training()
     model.optimizer = optimizer
     lr_scheduler = CosineAnnealingLR(model.optimizer, config['epoch_max'], eta_min=config.get('lr_min'))
