@@ -1,9 +1,12 @@
 import argparse
 import os
 import random
+import itertools
 
 import yaml
 from tqdm import tqdm
+import torch
+import torch.distributed as dist
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
@@ -11,8 +14,9 @@ import datasets
 import models
 import utils
 from statistics import mean
-import torch
-import torch.distributed as dist
+
+
+import pdb
 
 from ZeroShotProxy import compute_naswot_score, compute_zico_score, compute_zen_score
 
@@ -29,20 +33,32 @@ device = torch.device("cuda", local_rank)
 # - dataset
 # - sam pretrained model
 
-def generate_random_mlp(config):
-    scale_factor = random.choice(config['search']['search_space']['scale_factor'])
-    prompt_num = random.choice(config['search']['search_space']['prompt_num'])
-    prompt_layernum = sorted(random.sample(range(1, 13), prompt_num))
-    prompt_activation = random.choice(config['search']['search_space']['prompt_activation'])
+def generate_architecture_candidate_at_once(config):
 
-    architecture_config = {
-        'scale_factor': scale_factor,
-        'prompt_num': prompt_num,
-        'prompt_layernum': prompt_layernum,
-        'prompt_activation': prompt_activation
-    }
+    search_space = config['search']['search_space']
 
-    return architecture_config
+    all_values = {key: value for key, value in search_space.items()}
+
+    all_layernums= []
+    for prompt_num in all_values['prompt_num']:
+        possible_layernums = list(itertools.combinations(range(1, 13), prompt_num))
+        all_layernums.append(possible_layernums)
+    
+    arch_configs = []
+    for combination in itertools.product(*all_values.values()):
+        scale_factor, prompt_num, prompt_activation = combination
+        possible_layernums = all_layernums[all_values['prompt_num'].index(prompt_num)]
+        for layernum in possible_layernums:
+            arch_config = {
+                'scale_factor': scale_factor,
+                'prompt_num': prompt_num,
+                'prompt_layernum': layernum,
+                'prompt_activation': prompt_activation
+            }
+            arch_configs.append(arch_config)
+    
+
+    return arch_configs
 
 def prepare_training():
     if config.get('resume') is not None:
@@ -61,16 +77,16 @@ def prepare_training():
         log('model: #params={}'.format(utils.compute_num_params(model, text=True)))
     return model, optimizer, epoch_start, lr_scheduler
 
-def compute_nas_score(arch_config, model=None, search_proxy, train_loader=None, lossfunc=None):
+def compute_nas_score(arch_config, model=None, search_proxy='zico', train_loader=None, lossfunc=None):
     mlp_arch = arch_config
     sam_model = model
     search_proxy = search_proxy
 
 
     if search_proxy == 'zico':
-        nas_score = compute_zico_score.getzico(sam_model, train_loader, lossfunction)
+        nas_score =  compute_zico_score.getzico(sam_model, train_loader, lossfunction)
     elif search_proxy == 'zen':
-        # nas_score = compute_zen_score.compute_nas_score(mlp_arch, )
+        nas_score = 0 #compute_zen_score.compute_nas_score(mlp_arch, )
     elif search_proxy == 'naswot':
         nas_score = 0 #compute_naswot_score.compute()
 
@@ -88,19 +104,21 @@ def main(config_, save_path, args):
     search_epoch = config['search']['epoch_search_max']
     search_population = config['search']['population_size']
     search_patient = config['search']['patient']
-    
-    structure_list = []
-    score_list = []
-    
-
     max_patient = config['search']['patient']
     patient = 0
+    
+    # pdb.set_trace()
+    candidate_configs = generate_architecture_candidate_at_once(config)
+    
+    structure_list = []
+    best_score = 0
+    best_arch = []
 
-    for epoch in range(search_epoch):
+    for i in range(len(candidate_configs)):
         # random architecture search
-        arch_config = generate_random_mlp(config)
+        arch_config = candidate_configs[i]
         
-        # SAM architecture construct
+        # SAM architecture construct 
         model, optimizer, epoch_start, lr_scheduler = prepare_training(arch_config, config)
 
         model = model.cuda()
@@ -123,28 +141,18 @@ def main(config_, save_path, args):
         if nas_score > best_score:
             best_score = score
             best_arch = arch_config
-            patient = 0
+            # patient = 0
+            structure_list.append({'arch':best_arch, 'score': best_score})
+            structure_list = sorted(structure_list, key=lambda x: x['score'], reverse=True)
         else:
-            patient += 1
+            # patient += 1
         
         # patient comparison
-        if patient >= max_patient:
-            print("training stopped due to no improvement in NAS score")
-            break
+        # if patient >= max_patient:
+        #     print("training stopped due to no improvement in NAS score")
+        #     break
         
-        if len(structure_list) < search_population:
-            score_list.append(best_score)
-            structure_list.append(best_arch)
-        else:
-            structure_list.append(best_arch)
-            score_list.append(best_score)
-            
-            structure_list, score_list = zip(*sorted(zip(structure_list, score_list), key=lambda x:x[1]))
-
-            structure_list = structure_list[:search_population]
-            score_list = score_list[:search_population]
-
-    return structure_list, score_list
+    return structure_list
             
 
 
@@ -155,6 +163,7 @@ if __name__ == '__main__':
     parser.add_argument('--name', default = None)
     parser.add_argument('--tag', default = None)
     parser.add_argument('--local_rank', type=int, default=-1, help="")
+    args = parser.parse_args()
 
     with open(args.config, 'r') as f:
         config = yaml.load(f, Loader=yaml.FullLoader)

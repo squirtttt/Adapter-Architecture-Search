@@ -3,3 +3,6 @@ load/
 
 # pretrained model ignore
 pretrained/
+
+# experimental result ignore
+save/
