@@ -20,3 +20,10 @@
   - search.py > compute_nas_score()
   - ./model/sam.py > Class Image encoder setting
   - ./model/mmseg/models/sam/image_encoder.py > Class Prompt generator setting
+
+- 🍥6/4
+  - search.py > prepare_training() ✅
+    - model의 search_config 가 설정된 대로 전달되도록 설정
+  - search.py > inference를 compute_zico.py 에서 할 수 있도록 코드 수정
+  - ./model/sam.py > Class Image encoder setting ✅
+  - ./model/mmseg/models/sam/image_encoder.py > Class Prompt generator setting ✅

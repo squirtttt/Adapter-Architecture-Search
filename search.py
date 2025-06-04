@@ -18,7 +18,7 @@ from statistics import mean
 
 import pdb
 
-from ZeroShotProxy import compute_naswot_score, compute_zico_score, compute_zen_score
+from ZeroShotProxy import compute_zico_score # compute_naswot, compute_zen_score
 
 torch.distributed.init_process_group(backend='nccl')
 local_rank = torch.distributed.get_rank()
@@ -60,7 +60,10 @@ def generate_architecture_candidate_at_once(config):
 
     return arch_configs
 
-def prepare_training():
+def prepare_training(arch_config, config):
+    # config merge
+    config['model']['args']['encoder_mode'].update(arch_config)
+
     if config.get('resume') is not None:
         model = models.make(config['model']).cuda()
         optimizer = utils.make_optimizer(
@@ -68,7 +71,7 @@ def prepare_training():
         epoch_start = config.get('resume') + 1
     else:
         model = models.make(config['model']).cuda()
-        optimizer = utils.make_optimizer(
+        optimizer = utils.make_optimizer(∂
             model.parameters(), config['optimizer'])
         epoch_start = 1
     max_epoch = config.get('epoch_max')
@@ -133,6 +136,14 @@ def main(config_, save_path, args):
 
         sam_checkpoint = torch.load(config['sam_checkpoint'])
         model.load_state_dict(sam_checkpoint, strict=False)
+
+        for name, para in model.named_parameters():
+            if "image_encoder" in name and "prompt_generator" not in name:
+                para.requires_grad_(False)
+        if local_rank == 0:
+            model_total_params = sum(p.numel() for p in model.parameters())
+            model_grad_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            print('model_grad_params:' + str(model_grad_params), '\nmodel_total_params:' + str(model_total_params))
         
         # compute nas score
         nas_score = compute_nas_score(arch_config, model, search_proxy)

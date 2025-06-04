@@ -41,6 +41,10 @@ class ImageEncoderViT(nn.Module):
         rel_pos_zero_init: bool = True,
         window_size: int = 0,
         global_attn_indexes: Tuple[int, ...] = (),
+        scale_factor = 32,
+        prompt_num = 4,
+        prompt_layernum = {1, 2, 3, 4},
+        prompt_activation = 'GELU'
     ) -> None:
         """
         Args:
@@ -113,7 +117,7 @@ class ImageEncoderViT(nn.Module):
             LayerNorm2d(out_chans),
         )
 
-        self.scale_factor = 32
+        # self.scale_factor = 32 << argument
         self.prompt_type = 'highpass'
         self.tuning_stage = 1234
         self.input_type = 'fft'
@@ -125,6 +129,7 @@ class ImageEncoderViT(nn.Module):
                                                 self.tuning_stage, self.depth,
                                                 self.input_type, self.freq_nums,
                                                 self.handcrafted_tune, self.embedding_tune, self.adaptor,
+                                                self.prompt_activation, self.prompt_num, self.prompt_layernum
                                                 img_size, patch_size)
         self.num_stages = self.depth
         self.out_indices = tuple(range(self.num_stages))
@@ -142,7 +147,8 @@ class ImageEncoderViT(nn.Module):
         B, H, W = x.shape[0], x.shape[1], x.shape[2]
         outs = []
         for i, blk in enumerate(self.blocks):
-            x = prompt[i].reshape(B, H, W, -1) + x
+            if i in self.prompt_layernum: # selected layer only
+                x = prompt[i].reshape(B, H, W, -1) + x
             x = blk(x)
             if i in self.out_indices:
                 outs.append(x)
@@ -214,7 +220,8 @@ def _no_grad_trunc_normal_(tensor, mean, std, a, b):
 
 class PromptGenerator(nn.Module):
     def __init__(self, scale_factor, prompt_type, embed_dim, tuning_stage, depth, input_type,
-                 freq_nums, handcrafted_tune, embedding_tune, adaptor, img_size, patch_size):
+                 freq_nums, handcrafted_tune, embedding_tune, adaptor, prompt_activation, prompt_num, prompt_layernum,
+                  img_size, patch_size):
         """
         Args:
         """
@@ -229,15 +236,23 @@ class PromptGenerator(nn.Module):
         self.handcrafted_tune = handcrafted_tune
         self.embedding_tune = embedding_tune
         self.adaptor = adaptor
+        self.prompt_activation = prompt_activation
+        self.prompt_num = prompt_num
+        self.prompt_layernum = prompt_layernum
 
         self.shared_mlp = nn.Linear(self.embed_dim//self.scale_factor, self.embed_dim)
         self.embedding_generator = nn.Linear(self.embed_dim, self.embed_dim//self.scale_factor)
-        for i in range(self.depth):
+
+        # activation function selection
+        activation_func = nn.GELU()
+        if self.prompt_activation == 'RELU':
+            activation_func = nn.ReLU()
+        for i in range(self.prompt_num):
             lightweight_mlp = nn.Sequential(
                 nn.Linear(self.embed_dim//self.scale_factor, self.embed_dim//self.scale_factor),
-                nn.GELU()
+                activation_func
             )
-            setattr(self, 'lightweight_mlp_{}'.format(str(i)), lightweight_mlp)
+            setattr(self, 'lightweight_mlp_{}'.format(str(self.prompt_layernum[i])), lightweight_mlp)
 
         self.prompt_generator = PatchEmbed2(img_size=img_size,
                                                    patch_size=patch_size, in_chans=3,
@@ -273,9 +288,8 @@ class PromptGenerator(nn.Module):
         N, C, H, W = handcrafted_feature.shape
         handcrafted_feature = handcrafted_feature.view(N, C, H*W).permute(0, 2, 1)
         prompts = []
-        for i in range(self.depth):
-            lightweight_mlp = getattr(self, 'lightweight_mlp_{}'.format(str(i)))
-            # prompt = proj_prompt(prompt)
+        for i in range(self.prompt_num): # selected layer only
+            lightweight_mlp = getattr(self, 'lightweight_mlp_{}'.format(str(self.prompt_layernum[i])))
             prompt = lightweight_mlp(handcrafted_feature + embedding_feature)
             prompts.append(self.shared_mlp(prompt))
         return prompts
