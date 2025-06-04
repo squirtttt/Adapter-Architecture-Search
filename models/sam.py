@@ -263,6 +263,11 @@ class SAM(nn.Module):
         self.backward_G()  # calculate graidents for G
         self.optimizer.step()  # udpate G's weights
 
+    def search_backward(self):
+        self.forward()
+        self.optimizer.zero_grad()
+        self.backward_G()
+
     def set_requires_grad(self, nets, requires_grad=False):
         """Set requies_grad=Fasle for all the networks to avoid unnecessary computations
         Parameters:

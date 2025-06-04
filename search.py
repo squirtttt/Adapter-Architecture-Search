@@ -87,7 +87,7 @@ def compute_nas_score(arch_config, model=None, search_proxy='zico', train_loader
 
 
     if search_proxy == 'zico':
-        nas_score =  compute_zico_score.getzico(sam_model, train_loader, lossfunction)
+        nas_score = getzico(sam_model, train_loader, lossfunction)
     elif search_proxy == 'zen':
         nas_score = 0 #compute_zen_score.compute_nas_score(mlp_arch, )
     elif search_proxy == 'naswot':
@@ -96,6 +96,72 @@ def compute_nas_score(arch_config, model=None, search_proxy='zico', train_loader
     torch.cuda.empty_cache()
 
     return nas_score
+
+def getgrad(model:torch.nn.Module, grad_dict:dict, step_iter=0):
+    if step_iter==0:
+        for name,mod in model.named_modules():
+            if isinstance(mod, nn.Conv2d) or isinstance(mod, nn.Linear):
+                # print(mod.weight.grad.data.size())
+                # print(mod.weight.data.size())
+                grad_dict[name]=[mod.weight.grad.data.cpu().reshape(-1).numpy()]
+    else:
+        for name,mod in model.named_modules():
+            if isinstance(mod, nn.Conv2d) or isinstance(mod, nn.Linear):
+                grad_dict[name].append(mod.weight.grad.data.cpu().reshape( -1).numpy())
+    return grad_dict
+
+def caculate_zico(grad_dict):
+    allgrad_array=None
+    for i, modname in enumerate(grad_dict.keys()):
+        grad_dict[modname]= np.array(grad_dict[modname])
+    nsr_mean_sum = 0
+    nsr_mean_sum_abs = 0
+    nsr_mean_avg = 0
+    nsr_mean_avg_abs = 0
+    for j, modname in enumerate(grad_dict.keys()):
+        nsr_std = np.std(grad_dict[modname], axis=0)
+        nonzero_idx = np.nonzero(nsr_std)[0]
+        nsr_mean_abs = np.mean(np.abs(grad_dict[modname]), axis=0)
+        tmpsum = np.sum(nsr_mean_abs[nonzero_idx]/nsr_std[nonzero_idx])
+        if tmpsum==0:
+            pass
+        else:
+            nsr_mean_sum_abs += np.log(tmpsum)
+            nsr_mean_avg_abs += np.log(np.mean(nsr_mean_abs[nonzero_idx]/nsr_std[nonzero_idx]))
+    return nsr_mean_sum_abs
+
+def getzico(model, train_loader):
+    grad_dict= {}
+    model.train()
+
+    if local_rank == 0:
+        pbar = tqdm(total=len(train_loader), leave=False, desc='train')
+    else:
+        pbar = None
+
+    for i, batch in enumerate(trainloader):
+        for k, v in batch.items():
+            batch[k] = v.to(device)
+        network.zero_grad()
+        inp = batch['inp']
+        gt = batch['gt']
+        model.set_input(inp, gt)
+        model.search_backward()
+        batch_loss = [torch.zeros_like(model.loss_G) for _ in range(dist.get_world_size())]
+        dist.all_gather(batch_loss, model.loss_G)
+        loss_list.extend(batch_loss)
+        if pbar is not None:
+            pbar.update(1)
+
+        grad_dict= getgrad(network, grad_dict,i)
+        
+    res = caculate_zico(grad_dict)
+    if pbar is not None:
+        pbar.close()
+
+    loss = [i.item() for i in loss_list]
+    return mean(loss), res
+
 
 def main(config_, save_path, args):
     global config, log, writer, log_info
@@ -145,8 +211,14 @@ def main(config_, save_path, args):
             model_grad_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
             print('model_grad_params:' + str(model_grad_params), '\nmodel_total_params:' + str(model_total_params))
         
+        if local_rank == 0:
+            pbar = tqdm(total=len(candidate_configs), desc=f'Searching: candidate {i+1}/{len(candidate_configs)}', leave=False)
+
         # compute nas score
-        nas_score = compute_nas_score(arch_config, model, search_proxy)
+        loss, nas_score = compute_nas_score(model, search_proxy)
+
+        if local_rank==0:
+            pbar.set_description(f'Searching: candidate {i+1}/{len(candidate_configs)} | loss: {loss:.4f} | nas_score: {nas_score:.4f}')
 
         # score comparison
         if nas_score > best_score:
@@ -156,15 +228,21 @@ def main(config_, save_path, args):
             structure_list.append({'arch':best_arch, 'score': best_score})
             structure_list = sorted(structure_list, key=lambda x: x['score'], reverse=True)
         else:
+            pass
             # patient += 1
-        
+        if local_rank == 0:
+            pbar.update(1)        
         # patient comparison
         # if patient >= max_patient:
         #     print("training stopped due to no improvement in NAS score")
         #     break
-        
-    return structure_list
-            
+    if local_rank == 0:
+        config['model']['args']['encoder_mode'].update(best_arch)
+
+        with open(save_path, 'w') as f:
+            yaml.dump(config, f, sort_keys=False)
+        print(f'best architecture config saved at: {save_path}')
+
 
 
 
