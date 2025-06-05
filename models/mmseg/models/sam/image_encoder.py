@@ -129,7 +129,7 @@ class ImageEncoderViT(nn.Module):
                                                 self.tuning_stage, self.depth,
                                                 self.input_type, self.freq_nums,
                                                 self.handcrafted_tune, self.embedding_tune, self.adaptor,
-                                                self.prompt_activation, self.prompt_num, self.prompt_layernum
+                                                self.prompt_activation, self.prompt_num, self.prompt_layernum,
                                                 img_size, patch_size)
         self.num_stages = self.depth
         self.out_indices = tuple(range(self.num_stages))

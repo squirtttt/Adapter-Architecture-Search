@@ -6,3 +6,6 @@ pretrained/
 
 # experimental result ignore
 save/
+
+# pyc files ignore
+*.pyc

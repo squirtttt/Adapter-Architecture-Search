@@ -21,4 +21,3 @@ def make(model_spec, args=None, load_sd=False):
     if load_sd: ## <false
         model.load_state_dict(model_spec['sd'])
     return model
-∂

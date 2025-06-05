@@ -2,8 +2,8 @@ train_dataset:
   dataset:
     name: paired-image-folders
     args:
-      root_path_1: /public2/home/chaotao/datasets/codDataset/train/img
-      root_path_2: /public2/home/chaotao/datasets/codDataset/train/gt
+      root_path_1: /home/yn-jang/aas/load/Kvasir-SEG/images
+      root_path_2: /home/yn-jang/aas/load/Kvasir-SEG/masks
       cache: none
       split_key: train
   wrapper:
@@ -17,8 +17,8 @@ val_dataset:
   dataset:
     name: paired-image-folders
     args:
-      root_path_1: /public2/home/chaotao/datasets/COD/TestDataset/COD10K/Imgs
-      root_path_2: /public2/home/chaotao/datasets/COD/TestDataset/COD10K/GT
+      root_path_1: /home/yn-jang/aas/load/Kvasir-SEG-test/images
+      root_path_2: /home/yn-jang/aas/load/Kvasir-SEG-test/masks
       cache: none
       split_key: test
   wrapper:
@@ -31,8 +31,8 @@ test_dataset:
   dataset:
     name: paired-image-folders
     args:
-      root_path_1: /public2/home/chaotao/datasets/COD/TestDataset/COD10K/Imgs
-      root_path_2: /public2/home/chaotao/datasets/COD/TestDataset/COD10K/GT
+      root_path_1: /home/yn-jang/aas/load/Kvasir-SEG-test/images
+      root_path_2: /home/yn-jang/aas/load/Kvasir-SEG-test/masks
       cache: none
       split_key: test
   wrapper:

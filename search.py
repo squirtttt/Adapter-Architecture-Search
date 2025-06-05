@@ -18,12 +18,12 @@ from statistics import mean
 
 import pdb
 
-from ZeroShotProxy import compute_zico_score # compute_naswot, compute_zen_score
+# from ZeroShotProxy import compute_zico_score # compute_naswot, compute_zen_score
 
 torch.distributed.init_process_group(backend='nccl')
 local_rank = torch.distributed.get_rank()
 torch.cuda.set_device(local_rank)
-device = torch.device("cuda", local_rank)
+device = torch.device("cuda:3", local_rank)
 
 # config로 불러와야 하는 내용
 # scoring
@@ -71,7 +71,7 @@ def prepare_training(arch_config, config):
         epoch_start = config.get('resume') + 1
     else:
         model = models.make(config['model']).cuda()
-        optimizer = utils.make_optimizer(∂
+        optimizer = utils.make_optimizer(
             model.parameters(), config['optimizer'])
         epoch_start = 1
     max_epoch = config.get('epoch_max')
@@ -178,7 +178,7 @@ def main(config_, save_path, args):
     
     # pdb.set_trace()
     candidate_configs = generate_architecture_candidate_at_once(config)
-    
+
     structure_list = []
     best_score = 0
     best_arch = []
