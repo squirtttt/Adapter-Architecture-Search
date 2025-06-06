@@ -6,9 +6,11 @@ import itertools
 import yaml
 from tqdm import tqdm
 import torch
+from torch import nn
 import torch.distributed as dist
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import CosineAnnealingLR
+import numpy as np
 
 import datasets
 import models
@@ -23,7 +25,7 @@ import pdb
 torch.distributed.init_process_group(backend='nccl')
 local_rank = torch.distributed.get_rank()
 torch.cuda.set_device(local_rank)
-device = torch.device("cuda:3", local_rank)
+device = torch.device("cuda", local_rank)
 
 # config로 불러와야 하는 내용
 # scoring
@@ -32,6 +34,28 @@ device = torch.device("cuda:3", local_rank)
 # sam-adapter
 # - dataset
 # - sam pretrained model
+
+def make_data_loader(spec, tag=''):
+    if spec is None:
+        return None
+
+    dataset = datasets.make(spec['dataset'])
+    dataset = datasets.make(spec['wrapper'], args={'dataset': dataset})
+    if local_rank == 0:
+        log('{} dataset: size={}'.format(tag, len(dataset)))
+        for k, v in dataset[0].items():
+            log('  {}: shape={}'.format(k, tuple(v.shape)))
+
+    sampler = torch.utils.data.distributed.DistributedSampler(dataset)
+    loader = DataLoader(dataset, batch_size=spec['batch_size'],
+        shuffle=False, num_workers=8, pin_memory=True, sampler=sampler)
+    return loader
+
+
+def make_data_loaders():
+    train_loader = make_data_loader(config.get('train_dataset'), tag='train')
+    val_loader = make_data_loader(config.get('val_dataset'), tag='val')
+    return train_loader, val_loader
 
 def generate_architecture_candidate_at_once(config):
 
@@ -87,7 +111,7 @@ def compute_nas_score(arch_config, model=None, search_proxy='zico', train_loader
 
 
     if search_proxy == 'zico':
-        nas_score = getzico(sam_model, train_loader, lossfunction)
+        nas_score = getzico(sam_model, train_loader)
     elif search_proxy == 'zen':
         nas_score = 0 #compute_zen_score.compute_nas_score(mlp_arch, )
     elif search_proxy == 'naswot':
@@ -100,14 +124,23 @@ def compute_nas_score(arch_config, model=None, search_proxy='zico', train_loader
 def getgrad(model:torch.nn.Module, grad_dict:dict, step_iter=0):
     if step_iter==0:
         for name,mod in model.named_modules():
-            if isinstance(mod, nn.Conv2d) or isinstance(mod, nn.Linear):
-                # print(mod.weight.grad.data.size())
-                # print(mod.weight.data.size())
-                grad_dict[name]=[mod.weight.grad.data.cpu().reshape(-1).numpy()]
+            #if isinstance(mod, nn.Linear): # isinstance(mod, nn.Conv2d) or isinstance(mod, nn.Linear):
+            if 'prompt_generator' in name:
+                if 'lightweight_mlp_' in name and name.endswith('.0') and isinstance(mod, torch.nn.Linear):
+                    # pdb.set_trace()
+                    # print(mod.weight.grad.data.size())
+                    # print(mod.weight.data.size())
+                    name = [s for s in name.split('.') if s.startswith('lightweight_mlp_')]
+                    short_name = name[0]
+                    grad_dict[short_name]=[mod.weight.grad.data.cpu().reshape(-1).numpy()]
     else:
         for name,mod in model.named_modules():
-            if isinstance(mod, nn.Conv2d) or isinstance(mod, nn.Linear):
-                grad_dict[name].append(mod.weight.grad.data.cpu().reshape( -1).numpy())
+            if "prompt_generator" in name:
+            #if isinstance(mod, nn.Linear): # isinstance(mod, nn.Conv2d) or isinstance(mod, nn.Linear):
+                if 'lightweight_mlp_' in name and name.endswith('.0') and isinstance(mod, torch.nn.Linear):
+                    name = [s for s in name.split('.') if s.startswith('lightweight_mlp_')]
+                    short_name = name[0]
+                    grad_dict[short_name].append(mod.weight.grad.data.cpu().reshape( -1).numpy())
     return grad_dict
 
 def caculate_zico(grad_dict):
@@ -133,16 +166,16 @@ def caculate_zico(grad_dict):
 def getzico(model, train_loader):
     grad_dict= {}
     model.train()
-
+    loss_list = []
     if local_rank == 0:
         pbar = tqdm(total=len(train_loader), leave=False, desc='train')
     else:
         pbar = None
 
-    for i, batch in enumerate(trainloader):
+    for i, batch in enumerate(train_loader):
         for k, v in batch.items():
             batch[k] = v.to(device)
-        network.zero_grad()
+        model.zero_grad()
         inp = batch['inp']
         gt = batch['gt']
         model.set_input(inp, gt)
@@ -153,7 +186,7 @@ def getzico(model, train_loader):
         if pbar is not None:
             pbar.update(1)
 
-        grad_dict= getgrad(network, grad_dict,i)
+        grad_dict= getgrad(model, grad_dict,i)
         
     res = caculate_zico(grad_dict)
     if pbar is not None:
@@ -170,6 +203,13 @@ def main(config_, save_path, args):
     with open(os.path.join(save_path, 'config.yaml'), 'w') as f:
         yaml.dump(config, f, sort_keys=False)
     
+    train_loader, val_loader = make_data_loaders()
+    if config.get('data_norm') is None:
+        config['data_norm'] = {
+            'inp': {'sub': [0], 'div': [1]},
+            'gt': {'sub': [0], 'div': [1]}
+        }
+
     search_epoch = config['search']['epoch_search_max']
     search_population = config['search']['population_size']
     search_patient = config['search']['patient']
@@ -186,9 +226,11 @@ def main(config_, save_path, args):
     for i in range(len(candidate_configs)):
         # random architecture search
         arch_config = candidate_configs[i]
+        print(f"candidate:{arch_config}")
         
         # SAM architecture construct 
         model, optimizer, epoch_start, lr_scheduler = prepare_training(arch_config, config)
+        model.optimizer = optimizer
 
         model = model.cuda()
         model = torch.nn.parallel.DistributedDataParallel(
@@ -215,14 +257,14 @@ def main(config_, save_path, args):
             pbar = tqdm(total=len(candidate_configs), desc=f'Searching: candidate {i+1}/{len(candidate_configs)}', leave=False)
 
         # compute nas score
-        loss, nas_score = compute_nas_score(model, search_proxy)
+        loss, nas_score = compute_nas_score(arch_config = arch_config, model=model, search_proxy='zico',train_loader=train_loader)
 
         if local_rank==0:
             pbar.set_description(f'Searching: candidate {i+1}/{len(candidate_configs)} | loss: {loss:.4f} | nas_score: {nas_score:.4f}')
 
         # score comparison
         if nas_score > best_score:
-            best_score = score
+            best_score = nas_score
             best_arch = arch_config
             # patient = 0
             structure_list.append({'arch':best_arch, 'score': best_score})

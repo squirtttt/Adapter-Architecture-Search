@@ -81,14 +81,14 @@ model:
       handcrafted_tune: true
       embedding_tune: true
       adaptor: adaptor
-      embed_dim: 1280
-      depth: 32
-      num_heads: 16
+      embed_dim: 768 #1280
+      depth: 12
+      num_heads: 12
       global_attn_indexes:
-      - 7
-      - 15
-      - 23
-      - 31
+      - 2
+      - 5
+      - 8
+      - 11
       # adapter search << appended by prepare_training()
       # scale_factor: 32 
       # prompt_num: 12

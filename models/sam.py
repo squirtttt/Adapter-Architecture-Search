@@ -115,7 +115,7 @@ class SAM(nn.Module):
             scale_factor = encoder_mode['scale_factor'],
             prompt_num = encoder_mode['prompt_num'],
             prompt_layernum = encoder_mode['prompt_layernum'],
-            prompt_activate = encoder_mode['prompt_activation']
+            prompt_activation = encoder_mode['prompt_activation']
         )
         self.prompt_embed_dim = encoder_mode['prompt_embed_dim']
         self.mask_decoder = MaskDecoder(

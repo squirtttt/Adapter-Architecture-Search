@@ -21,6 +21,8 @@ if TORCH_MAJOR == 1 and TORCH_MINOR < 8:
 else:
     import collections.abc as container_abcs
 
+import pdb
+
 # This class and its supporting functions below lightly adapted from the ViTDet backbone available at: https://github.com/facebookresearch/detectron2/blob/main/detectron2/modeling/backbone/vit.py # noqa
 class ImageEncoderViT(nn.Module):
     def __init__(
@@ -117,7 +119,10 @@ class ImageEncoderViT(nn.Module):
             LayerNorm2d(out_chans),
         )
 
-        # self.scale_factor = 32 << argument
+        self.scale_factor = scale_factor
+        self.prompt_activation = prompt_activation
+        self.prompt_num = prompt_num
+        self.prompt_layernum = prompt_layernum 
         self.prompt_type = 'highpass'
         self.tuning_stage = 1234
         self.input_type = 'fft'
@@ -146,9 +151,12 @@ class ImageEncoderViT(nn.Module):
 
         B, H, W = x.shape[0], x.shape[1], x.shape[2]
         outs = []
+        # pdb.set_trace()
         for i, blk in enumerate(self.blocks):
-            if i in self.prompt_layernum: # selected layer only
-                x = prompt[i].reshape(B, H, W, -1) + x
+            j=i+1
+            if j in self.prompt_layernum: # selected layer only
+                layer_idx = self.prompt_layernum.index(j)
+                x = prompt[layer_idx].reshape(B, H, W, -1) + x
             x = blk(x)
             if i in self.out_indices:
                 outs.append(x)
