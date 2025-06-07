@@ -217,7 +217,8 @@ def main(config_, save_path, args):
     patient = 0
     
     # pdb.set_trace()
-    candidate_configs = generate_architecture_candidate_at_once(config)
+    all_arch_candidate = generate_architecture_candidate_at_once(config)
+    candidate_configs = random.sample(all_arch_candidate, 1000)
 
     structure_list = []
     best_score = 0
@@ -261,6 +262,7 @@ def main(config_, save_path, args):
 
         if local_rank==0:
             pbar.set_description(f'Searching: candidate {i+1}/{len(candidate_configs)} | loss: {loss:.4f} | nas_score: {nas_score:.4f}')
+            log(f'search_config: {arch_configs}| nas_score: {nas_score:.4f}')
 
         # score comparison
         if nas_score > best_score:
