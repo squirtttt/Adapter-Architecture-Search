@@ -40,3 +40,10 @@
 - 6/7
   - 4만개의 sample을 모두 다루는 것은 말이 안됨
   - 우선은 1000개를 random sampling 하여 선택하는 것으로 결정
+
+- 💦6/10
+  - CAMO 데이터셋에 대한 search 종료 ✅
+  - promise12 데이터셋 실험 가능하도록 구축
+  - CAMO 데이터셋 train 진행
+  - search.py 마지막에 저장하는 부분 오류 해결 ✅
+  - train.py 수정
