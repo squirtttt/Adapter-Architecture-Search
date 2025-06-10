@@ -1,0 +1,145 @@
+train_dataset:
+  dataset:
+    name: paired-image-folders
+    args:
+      root_path_1: ./load/PROMISE2012/Train_img
+      root_path_2: ./load/PROMISE2012/Train_gt
+      cache: none
+      split_key: train
+  wrapper:
+    name: train
+    args:
+      inp_size: 256
+      augment: false
+  batch_size: 4
+
+val_dataset:
+  dataset:
+    name: paired-image-folders
+    args:
+      root_path_1: ./load/PROMISE2012/Val_img
+      root_path_2: ./load/PROMISE2012/Val_gt
+      cache: none
+      split_key: test
+  wrapper:
+    name: val
+    args:
+      inp_size: 256
+  batch_size: 4
+
+test_dataset:
+  dataset:
+    name: paired-image-folders
+    args:
+      root_path_1: ./load/PROMISE2012/Val_img
+      root_path_2: ./load/PROMISE2012/Val_gt
+      cache: none
+      split_key: test
+  wrapper:
+    name: val
+    args:
+      inp_size: 256
+  batch_size: 2
+
+eval_type: cod
+sam_checkpoint: ./pretrained/sam_vit_b_01ec64.pth
+data_norm:
+  inp:
+    sub:
+    - 0.5
+    div:
+    - 0.5
+  gt:
+    sub:
+    - 0.5
+    div:
+    - 0.5
+  gt_rgb:
+    sub:
+    - 0.5
+    div:
+    - 0.5
+model:
+  name: sam
+  args:
+    inp_size: 256
+    loss: iou
+    encoder_mode:
+      name: sam
+      img_size: 256
+      mlp_ratio: 4
+      patch_size: 4
+      qkv_bias: true
+      use_rel_pos: true
+      window_size: 14
+      out_chans: 256
+      input_type: fft
+      freq_nums: 0.25
+      prompt_type: highpass
+      prompt_embed_dim: 256
+      tuning_stage: 1234
+      handcrafted_tune: true
+      embedding_tune: true
+      adaptor: adaptor
+      embed_dim: 768 #1280
+      depth: 12
+      num_heads: 12
+      global_attn_indexes:
+      - 2
+      - 5
+      - 8
+      - 11
+      # adapter search << appended by prepare_training()
+      # scale_factor: 
+      # prompt_num: 
+      # prompt_activation: 
+      # prompt_layernum:
+optimizer:
+  name: adamw
+  args:
+    lr: 0.0002
+lr_min: 1.0e-7
+epoch_max: 100
+
+
+multi_step_lr:
+  milestones:
+  - 1
+  gamma: 0.1
+epoch_val: 1
+epoch_save: 1
+
+# search config
+search:
+  epoch_search_max: 10000
+  search_proxy: zico # zenscore, naswot
+  population_size: 512
+  patient: 10
+  search_space:
+    scale_factor:
+    - 16
+    - 32
+    - 64
+    - 128
+    prompt_num:
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    prompt_activation:
+    - GELU
+    - ReLU
+    
+
+
+
+#resume: 60
+#start_epoch: 60

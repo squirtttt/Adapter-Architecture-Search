@@ -43,7 +43,9 @@
 
 - 💦6/10
   - CAMO 데이터셋에 대한 search 종료 ✅
-  - promise12 데이터셋 실험 가능하도록 구축
-  - CAMO 데이터셋 train 진행
+  - promise12 데이터셋 실험 가능하도록 구축 ✅
+  - CAMO 데이터셋 train 진행 ✅
   - search.py 마지막에 저장하는 부분 오류 해결 ✅
-  - train.py 수정
+  - train.py 수정 ✅
+  - promise12 데이터셋 실험 진행
+    - image 크기가 256*256 이기 떄문인지? 에러 발생

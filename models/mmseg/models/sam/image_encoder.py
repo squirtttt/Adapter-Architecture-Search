@@ -71,9 +71,17 @@ class ImageEncoderViT(nn.Module):
         self.embed_dim = embed_dim
         self.depth = depth
 
+        # self.patch_embed = PatchEmbed(
+        #     kernel_size=(patch_size, patch_size),
+        #     stride=(patch_size, patch_size),
+        #     in_chans=in_chans,
+        #     embed_dim=embed_dim,
+        # )
+
+        # for 256
         self.patch_embed = PatchEmbed(
-            kernel_size=(patch_size, patch_size),
-            stride=(patch_size, patch_size),
+            kernel_size=(16, 16),
+            stride=(16, 16),
             in_chans=in_chans,
             embed_dim=embed_dim,
         )
@@ -293,6 +301,7 @@ class PromptGenerator(nn.Module):
         return self.prompt_generator(x)
 
     def get_prompt(self, handcrafted_feature, embedding_feature):
+        pdb.set_trace()
         N, C, H, W = handcrafted_feature.shape
         handcrafted_feature = handcrafted_feature.view(N, C, H*W).permute(0, 2, 1)
         prompts = []
@@ -365,6 +374,7 @@ class PatchEmbed2(nn.Module):
 
     def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=768):
         super().__init__()
+        # pdb.set_trace()
         img_size = to_2tuple(img_size)
         patch_size = to_2tuple(patch_size)
         num_patches = (img_size[1] // patch_size[1]) * \
@@ -376,13 +386,14 @@ class PatchEmbed2(nn.Module):
         self.proj = nn.Conv2d(in_chans, embed_dim,
                               kernel_size=patch_size, stride=patch_size)
 
+
     def forward(self, x):
         B, C, H, W = x.shape
         # FIXME look at relaxing size constraints
         assert H == self.img_size[0] and W == self.img_size[1], \
             f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
 
-        # x = F.interpolate(x, size=2*x.shape[-1], mode='bilinear', align_corners=True)
+        x = F.interpolate(x, size=2*x.shape[-1], mode='bilinear', align_corners=True)
         x = self.proj(x)
         return x
 

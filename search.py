@@ -282,7 +282,7 @@ def main(config_, save_path, args):
         #     break
     if local_rank == 0:
         config['model']['args']['encoder_mode'].update(best_arch)
-
+        save_path = save_name+"/best_arch.yaml"
         with open(save_path, 'w') as f:
             yaml.dump(config, f, sort_keys=False)
         print(f'best architecture config saved at: {save_path}')
@@ -308,7 +308,8 @@ if __name__ == '__main__':
         save_name = '_'+ args.config.split('/')[-1][:-len('.yaml')]
     if args.tag is not None:
         save_name += '_' + args.tag
-    save_name = save_name+"/best_arch.yaml"
+
     save_path = os.path.join('./save', save_name)
 
     main(config, save_path, args=args)
+    
