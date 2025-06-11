@@ -2,8 +2,8 @@ train_dataset:
   dataset:
     name: paired-image-folders
     args:
-      root_path_1: /home/yn-jang/aas/load/Kvasir-SEG/images
-      root_path_2: /home/yn-jang/aas/load/Kvasir-SEG/masks
+      root_path_1: ./load/CAMO/Images/Train
+      root_path_2: ./load/CAMO/Train_gt
       cache: none
       split_key: train
   wrapper:
@@ -11,28 +11,28 @@ train_dataset:
     args:
       inp_size: 1024
       augment: false
-  batch_size: 2
+  batch_size: 1
 
 val_dataset:
   dataset:
     name: paired-image-folders
     args:
-      root_path_1: /home/yn-jang/aas/load/Kvasir-SEG-test/images
-      root_path_2: /home/yn-jang/aas/load/Kvasir-SEG-test/masks
+      root_path_1: ./load/CAMO/Images/Test
+      root_path_2: ./load/CAMO/Test_gt
       cache: none
       split_key: test
   wrapper:
     name: val
     args:
       inp_size: 1024
-  batch_size: 2
+  batch_size: 1
 
 test_dataset:
   dataset:
     name: paired-image-folders
     args:
-      root_path_1: /home/yn-jang/aas/load/Kvasir-SEG-test/images
-      root_path_2: /home/yn-jang/aas/load/Kvasir-SEG-test/masks
+      root_path_1: ./load/CAMO/Images/Test
+      root_path_2: ./load/CAMO/Test_gt
       cache: none
       split_key: test
   wrapper:
@@ -90,6 +90,21 @@ model:
       - 5
       - 8
       - 11
+      prompt_num: 12
+      prompt_activation: GELU
+      prompt_layernum: 
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      - 7
+      - 8
+      - 9
+      - 10
+      - 11
+      - 12
 optimizer:
   name: adamw
   args:
