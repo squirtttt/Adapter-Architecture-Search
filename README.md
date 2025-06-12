@@ -52,5 +52,9 @@
     -> 원래 sam은 1024 size에서만 구동된다 함 > 256*256에서는 사용이 안됨!!!
   - camelyon 데이터셋을 1024 patch로 잘라서 사용해보기
 
-- 6/11
+- ⚾6/11
   - sam-adapter의 vit-b 모델을 이용한 훈련
+  - 실험 결과> original model이 약간 더 높게 나옴
+
+- ☕6/12
+  - polyp 데이터셋을 이용한 search 시작
