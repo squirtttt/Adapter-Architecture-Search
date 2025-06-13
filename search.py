@@ -262,7 +262,7 @@ def main(config_, save_path, args):
 
         if local_rank==0:
             pbar.set_description(f'Searching: candidate {i+1}/{len(candidate_configs)} | loss: {loss:.4f} | nas_score: {nas_score:.4f}')
-            log(f'search_config: {arch_config}| nas_score: {nas_score:.4f}')
+            log(f'search_config: {arch_config}| loss: {loss:.4f} | nas_score: {nas_score:.4f}')
 
         # score comparison
         if nas_score > best_score:

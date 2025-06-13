@@ -11,7 +11,7 @@ train_dataset:
     args:
       inp_size: 1024
       augment: false
-  batch_size: 2
+  batch_size: 1
 
 val_dataset:
   dataset:
@@ -25,7 +25,7 @@ val_dataset:
     name: val
     args:
       inp_size: 1024
-  batch_size: 2
+  batch_size: 1
 
 test_dataset:
   dataset:
@@ -90,10 +90,13 @@ model:
       - 8
       - 11
       # adapter search << appended by prepare_training()
-      # scale_factor: 16
-      # prompt_num: 11
-      # prompt_activation: GELU
-      # prompt_layernum: 
+      scale_factor: 256
+      prompt_num: 3
+      prompt_activation: GELU
+      prompt_layernum: 
+      - 1
+      - 9
+      - 10
 
 
 optimizer:
@@ -101,7 +104,7 @@ optimizer:
   args:
     lr: 0.0002
 lr_min: 1.0e-7
-epoch_max: 20
+epoch_max: 120 # - polyp # 20 - camo
 
 
 multi_step_lr:
