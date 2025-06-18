@@ -111,7 +111,7 @@ def compute_nas_score(arch_config, model=None, search_proxy='zico', train_loader
 
 
     if search_proxy == 'zico':
-        nas_score = getzico(sam_model, train_loader)
+        nas_score = getzico(sam_model, train_loader, arch_config)
     elif search_proxy == 'zen':
         nas_score = 0 #compute_zen_score.compute_nas_score(mlp_arch, )
     elif search_proxy == 'naswot':
@@ -143,7 +143,7 @@ def getgrad(model:torch.nn.Module, grad_dict:dict, step_iter=0):
                     grad_dict[short_name].append(mod.weight.grad.data.cpu().reshape( -1).numpy())
     return grad_dict
 
-def caculate_zico(grad_dict):
+def caculate_zico(grad_dict, arch_config):
     allgrad_array=None
     for i, modname in enumerate(grad_dict.keys()):
         grad_dict[modname]= np.array(grad_dict[modname])
@@ -151,7 +151,11 @@ def caculate_zico(grad_dict):
     nsr_mean_sum_abs = 0
     nsr_mean_avg = 0
     nsr_mean_avg_abs = 0
+    score_dict = {}
+    scale_factor = arch_config['model']['args']['encoder_mode']['scale_factor']
+    dim = arch_config['model']['args']['encoder_mode']['embed_dim']//arch_config['model']['args']['encoder_mode']['scale_factor']
     for j, modname in enumerate(grad_dict.keys()):
+        # pdb.set_trace()
         nsr_std = np.std(grad_dict[modname], axis=0)
         nonzero_idx = np.nonzero(nsr_std)[0]
         nsr_mean_abs = np.mean(np.abs(grad_dict[modname]), axis=0)
@@ -159,11 +163,16 @@ def caculate_zico(grad_dict):
         if tmpsum==0:
             pass
         else:
-            nsr_mean_sum_abs += np.log(tmpsum)
+            # tmp_sum = (np.log(tmpsum))/dim
+            d = grad_dict[modname].shape[1]
+            tmp_sum = np.log(1+tmpsum/d) #*scale_factor
+            nsr_mean_sum_abs += tmp_sum
             nsr_mean_avg_abs += np.log(np.mean(nsr_mean_abs[nonzero_idx]/nsr_std[nonzero_idx]))
-    return nsr_mean_sum_abs
+            score_dict[modname] = tmp_sum
+    score = nsr_mean_sum_abs/len(grad_dict)
+    return score, score_dict # nsr_mean_sum_abs
 
-def getzico(model, train_loader):
+def getzico(model, train_loader, arch_config):
     grad_dict= {}
     model.train()
     loss_list = []
@@ -185,15 +194,16 @@ def getzico(model, train_loader):
         loss_list.extend(batch_loss)
         if pbar is not None:
             pbar.update(1)
-
-        grad_dict= getgrad(model, grad_dict,i)
         
-    res = caculate_zico(grad_dict)
+        grad_dict= getgrad(model, grad_dict,i)
+    
+    #pdb.set_trace()    
+    res, score_dict = caculate_zico(grad_dict, arch_config)
     if pbar is not None:
         pbar.close()
 
     loss = [i.item() for i in loss_list]
-    return mean(loss), res
+    return mean(loss), res, score_dict
 
 
 def main(config_, save_path, args):
@@ -258,11 +268,14 @@ def main(config_, save_path, args):
             pbar = tqdm(total=len(candidate_configs), desc=f'Searching: candidate {i+1}/{len(candidate_configs)}', leave=False)
 
         # compute nas score
-        loss, nas_score = compute_nas_score(arch_config = arch_config, model=model, search_proxy='zico',train_loader=train_loader)
+        loss, nas_score, score_dict = compute_nas_score(arch_config = config, model=model, search_proxy='zico',train_loader=train_loader)
 
         if local_rank==0:
             pbar.set_description(f'Searching: candidate {i+1}/{len(candidate_configs)} | loss: {loss:.4f} | nas_score: {nas_score:.4f}')
             log(f'search_config: {arch_config}| loss: {loss:.4f} | nas_score: {nas_score:.4f}')
+            for i, modname in enumerate(score_dict):
+                log(f'{modname}: {score_dict[modname]}')
+
 
         # score comparison
         if nas_score > best_score:

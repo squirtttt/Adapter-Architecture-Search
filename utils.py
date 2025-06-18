@@ -206,6 +206,50 @@ def calc_fmeasure(y_pred,y_true):
 
     return fmeasure, MAE, np.array(0), np.array(0)
 
+
+def calc_polyp(y_pred, y_true, threshold=0.5, eps=1e-7):
+    '''
+    Calculates mean Dice and mean IoU per batch
+
+    Args:
+        y_pred: (B, H, W) or (B, 1, H, W), predicted probabilities
+        y_true: (B, H, W) or (B, 1, H, W), ground truth binary masks
+        threshold: threshold to binarize predictions
+        eps: small value to avoid division by zero
+
+    Returns:
+        mDice, mIoU (averaged over batch)
+    '''
+    with torch.no_grad():
+        if y_pred.shape != y_true.shape:
+            raise ValueError("y_pred and y_true must have the same shape")
+        
+        if y_pred.dim() == 4:
+            y_pred = y_pred.squeeze(1)
+            y_true = y_true.squeeze(1)
+        
+        batchsize = y_true.shape[0]
+        mdice, miou = 0, 0
+
+        y_pred = (y_pred > threshold).float()
+        y_pred = y_pred.cpu().numpy()
+        y_true = y_true.cpu().numpy()
+
+        for i in range(batchsize):
+            pred = y_pred[i].flatten()
+            true = y_true[i].flatten()
+
+            intersection = np.sum(pred * true)
+            union = np.sum(pred) + np.sum(true)
+
+            dice = (2. * intersection + eps) / (union + eps)
+            iou = (intersection + eps) / (np.sum((pred + true) > 0) + eps)
+
+            mdice += dice
+            miou += iou
+
+        return mdice / batchsize, miou / batchsize, np.array(0), np.array(0)
+
 from sklearn.metrics import roc_auc_score,recall_score,precision_score
 import cv2
 def calc_ber(y_pred, y_true):
