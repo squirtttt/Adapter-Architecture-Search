@@ -41,7 +41,7 @@ test_dataset:
       inp_size: 1024
   batch_size: 1
 
-eval_type: polyp
+eval_type: cod
 sam_checkpoint: ./pretrained/sam_vit_b_01ec64.pth
 data_norm:
   inp:
@@ -92,10 +92,19 @@ model:
       # adapter search << appended by prepare_training()
       # 0.7469
       scale_factor: 32
-      prompt_num: 3
-      prompt_activation: GELU
-      prompt_layernum: 
+      prompt_num: 12
+      prompt_activation: ReLU
+      prompt_layernum:
       - 1
+      - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      - 7
+      - 8
+      - 9
+      - 10
       - 11
       - 12
 

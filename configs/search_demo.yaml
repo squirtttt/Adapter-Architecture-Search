@@ -90,16 +90,22 @@ model:
       - 8
       - 11
       # adapter search << appended by prepare_training()
-      scale_factor: 128
-      prompt_num: 6
-      prompt_activation: ReLU
+      scale_factor: 32
+      prompt_num: 12
+      prompt_activation: GELU
       prompt_layernum:
       - 1
       - 2
       - 3
       - 4
+      - 5
+      - 6
       - 7
+      - 8
+      - 9
       - 10
+      - 11
+      - 12
 
 optimizer:
   name: adamw
