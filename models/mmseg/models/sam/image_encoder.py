@@ -44,8 +44,7 @@ class ImageEncoderViT(nn.Module):
         window_size: int = 0,
         global_attn_indexes: Tuple[int, ...] = (),
         scale_factor = 32,
-        prompt_num = 4,
-        prompt_layernum = {1, 2, 3, 4},
+        alpha: list = None,
         prompt_activation = 'GELU'
     ) -> None:
         """
@@ -122,8 +121,8 @@ class ImageEncoderViT(nn.Module):
 
         self.scale_factor = scale_factor
         self.prompt_activation = prompt_activation
-        self.prompt_num = prompt_num
-        self.prompt_layernum = prompt_layernum 
+        if alpha is None:
+            self.alpha = nn.Parameter(torch.tensor(alpha, dtype=float32))
         self.prompt_type = 'highpass'
         self.tuning_stage = 1234
         self.input_type = 'fft'
@@ -135,7 +134,7 @@ class ImageEncoderViT(nn.Module):
                                                 self.tuning_stage, self.depth,
                                                 self.input_type, self.freq_nums,
                                                 self.handcrafted_tune, self.embedding_tune, self.adaptor,
-                                                self.prompt_activation, self.prompt_num, self.prompt_layernum,
+                                                self.prompt_activation, self.alpha,
                                                 img_size, patch_size)
         self.num_stages = self.depth
         self.out_indices = tuple(range(self.num_stages))
@@ -154,10 +153,7 @@ class ImageEncoderViT(nn.Module):
         outs = []
         # pdb.set_trace()
         for i, blk in enumerate(self.blocks):
-            j=i+1
-            if j in self.prompt_layernum: # selected layer only
-                layer_idx = self.prompt_layernum.index(j)
-                x = prompt[layer_idx].reshape(B, H, W, -1) + x
+            x = prompt[i].reshape(B, H, W, -1) + x
             x = blk(x)
             if i in self.out_indices:
                 outs.append(x)
@@ -256,7 +252,7 @@ class PromptGenerator(nn.Module):
         activation_func = nn.GELU()
         if self.prompt_activation == 'RELU':
             activation_func = nn.ReLU()
-        for i in range(self.prompt_num):
+        for i in range(self.depth):
             lightweight_mlp = nn.Sequential(
                 nn.Linear(self.embed_dim//self.scale_factor, self.embed_dim//self.scale_factor),
                 activation_func
@@ -298,9 +294,10 @@ class PromptGenerator(nn.Module):
         N, C, H, W = handcrafted_feature.shape
         handcrafted_feature = handcrafted_feature.view(N, C, H*W).permute(0, 2, 1)
         prompts = []
-        for i in range(self.prompt_num): # selected layer only
+        for i in range(self.depth): # selected layer only
             lightweight_mlp = getattr(self, 'lightweight_mlp_{}'.format(str(self.prompt_layernum[i])))
-            prompt = lightweight_mlp(handcrafted_feature + embedding_feature)
+            # multiply alpha with prompt output
+            prompt = lightweight_mlp(handcrafted_feature + embedding_feature) * self.alpha[i]
             prompts.append(self.shared_mlp(prompt))
         return prompts
 
