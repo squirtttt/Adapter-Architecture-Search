@@ -116,6 +116,7 @@ search:
   epsilon: 0.1
   tau: 0.5
   delta: 0.01
+  threshold: 0.5
   search_space:
     scale_factor:
     - 16

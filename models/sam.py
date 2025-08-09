@@ -113,8 +113,7 @@ class SAM(nn.Module):
             window_size=encoder_mode['window_size'],
             global_attn_indexes=encoder_mode['global_attn_indexes'],
             scale_factor = encoder_mode['scale_factor'],
-            prompt_num = encoder_mode['prompt_num'],
-            prompt_layernum = encoder_mode['prompt_layernum'],
+            alpha = encoder_mode['alpha'],
             prompt_activation = encoder_mode['prompt_activation']
         )
         self.prompt_embed_dim = encoder_mode['prompt_embed_dim']

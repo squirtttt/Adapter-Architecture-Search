@@ -17,6 +17,8 @@ import models
 import utils
 from statistics import mean
 
+import pdb
+
 
 torch.distributed.init_process_group(backend='nccl')
 local_rank = torch.distributed.get_rank()
@@ -193,7 +195,8 @@ def prepare_training(arch_config, config): # architecture construct
     max_epoch = config.get('epoch_max')
     lr_scheduler = CosineAnnealingLR(optimizer, max_epoch, eta_min=config.get('lr_min'))
     if local_rank == 0:
-        log('model: #params={}'.format(utils.compute_num_params(model, text=True)))
+        # log('model: #params={}'.format(utils.compute_num_params(model, text=True)))
+        log(f'arch configuration: {arch_config}')
     return model, optimizer, epoch_start, lr_scheduler
 
 ## search - main
@@ -248,6 +251,7 @@ def main(config_, save_path, args):
                 alpha_perturbed = alpha+delta
                 # alpha -> configuration update
                 adapter['alpha'] = alpha_perturbed.detach().clone()
+            
                 model, optimizer, epoch_start, lr_scheduler = prepare_training(adapter, config)
                 model.optimizer = optimizer
 

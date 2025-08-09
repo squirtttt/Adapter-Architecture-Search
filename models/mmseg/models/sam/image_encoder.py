@@ -121,8 +121,7 @@ class ImageEncoderViT(nn.Module):
 
         self.scale_factor = scale_factor
         self.prompt_activation = prompt_activation
-        if alpha is None:
-            self.alpha = nn.Parameter(torch.tensor(alpha, dtype=float32))
+        self.alpha = alpha
         self.prompt_type = 'highpass'
         self.tuning_stage = 1234
         self.input_type = 'fft'
@@ -225,7 +224,7 @@ def _no_grad_trunc_normal_(tensor, mean, std, a, b):
 
 class PromptGenerator(nn.Module):
     def __init__(self, scale_factor, prompt_type, embed_dim, tuning_stage, depth, input_type,
-                 freq_nums, handcrafted_tune, embedding_tune, adaptor, prompt_activation, prompt_num, prompt_layernum,
+                 freq_nums, handcrafted_tune, embedding_tune, adaptor, prompt_activation, alpha,
                   img_size, patch_size):
         """
         Args:
@@ -242,8 +241,7 @@ class PromptGenerator(nn.Module):
         self.embedding_tune = embedding_tune
         self.adaptor = adaptor
         self.prompt_activation = prompt_activation
-        self.prompt_num = prompt_num
-        self.prompt_layernum = prompt_layernum
+        self.alpha = alpha
 
         self.shared_mlp = nn.Linear(self.embed_dim//self.scale_factor, self.embed_dim)
         self.embedding_generator = nn.Linear(self.embed_dim, self.embed_dim//self.scale_factor)
@@ -257,7 +255,7 @@ class PromptGenerator(nn.Module):
                 nn.Linear(self.embed_dim//self.scale_factor, self.embed_dim//self.scale_factor),
                 activation_func
             )
-            setattr(self, 'lightweight_mlp_{}'.format(str(self.prompt_layernum[i])), lightweight_mlp)
+            setattr(self, 'lightweight_mlp_{}'.format(str(i)), lightweight_mlp)
 
         self.prompt_generator = PatchEmbed2(img_size=img_size,
                                                    patch_size=patch_size, in_chans=3,
@@ -295,7 +293,7 @@ class PromptGenerator(nn.Module):
         handcrafted_feature = handcrafted_feature.view(N, C, H*W).permute(0, 2, 1)
         prompts = []
         for i in range(self.depth): # selected layer only
-            lightweight_mlp = getattr(self, 'lightweight_mlp_{}'.format(str(self.prompt_layernum[i])))
+            lightweight_mlp = getattr(self, 'lightweight_mlp_{}'.format(str(i)))
             # multiply alpha with prompt output
             prompt = lightweight_mlp(handcrafted_feature + embedding_feature) * self.alpha[i]
             prompts.append(self.shared_mlp(prompt))
