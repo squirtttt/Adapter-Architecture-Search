@@ -229,7 +229,7 @@ def main(config_, save_path, args):
     arch_candidate = generate_architecture_candidate(config) # only scale_factor, activation function
 
 
-    best_score = float('inf')
+    best_score = float('-inf')
     best_adapter_idx = None
     best_alpha = None
     best_arch = {
@@ -240,7 +240,7 @@ def main(config_, save_path, args):
 
     for idx, adapter in enumerate(arch_candidate):
         alpha = nn.Parameter(torch.randn(12)) # parameters for each layer
-        best_arch_score = float('inf')
+        best_arch_score = float('-inf')
         no_improve_counter = 0
 
         for step in range(num_iter): # sampling for each arch config
@@ -290,7 +290,7 @@ def main(config_, save_path, args):
             alpha.data.add_(direction)
 
             current_best = float(torch.max(z))
-            if (current_best - best_arch_score) > min_delta:
+            if (current_best - best_arch_score) > min_delta: # best_arch_score = float('inf') << 이 상황에서는 당연히 inf일 수 있지 않나?
                 best_arch_score = current_best
                 no_improve_counter = 0
             else:
