@@ -239,12 +239,12 @@ def main(config_, save_path, args):
     }
 
     for idx, adapter in enumerate(arch_candidate):
-        alpha = nn.Parameter(torch.randn(12)) # parameters for each layer
+        alpha = nn.Parameter(torch.abs(torch.randn(12))) # parameters for each layer
         best_arch_score = float('inf')
         no_improve_counter = 0
 
         for step in range(num_iter): # sampling for each arch config
-            delta_lst = [torch.randn_like(alpha)*epsilon for _ in range(K)]
+            delta_lst = [torch.abs(torch.randn_like(alpha)*epsilon) for _ in range(K)]
             nas_scores = []
 
             for delta in delta_lst:
@@ -279,6 +279,9 @@ def main(config_, save_path, args):
                 # compute nas score
                 loss, nas_score, score_dict = compute_nas_score(arch_config = config, model=model, search_proxy='zico',train_loader=train_loader)
                 nas_scores.append(nas_score)
+                if local_rank == 0:
+                    # log('model: #params={}'.format(utils.compute_num_params(model, text=True)))
+                    log(f"current zico: {nas_score}")
             
             z = torch.tensor(nas_scores, device=alpha.device, dtype=torch.float32)
             weights = torch.softmax((z-z.max())/tau, dim=0)
@@ -291,9 +294,10 @@ def main(config_, save_path, args):
                 no_improve_counter = 0
             else:
                 no_improve_counter += 1
-
-            print(f"[Adapter {idx+1} | Step {step}] ZICO: {current_best:.4f} | Best: {best_score:.4f} | Patience: {no_improve_counter}")
-
+            if local_rank == 0:
+                # log('model: #params={}'.format(utils.compute_num_params(model, text=True)))
+                log(f"[Adapter {idx+1} | Step {step}] ZICO: {current_best:.4f} | Best: {best_score:.4f} | Patience: {no_improve_counter}")
+    
             if no_improve_counter >= patience:
                 print(f"Adapter {idx+1}: Early stopping triggered at step {step}.")
                 break
