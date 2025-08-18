@@ -239,16 +239,17 @@ def main(config_, save_path, args):
     }
 
     for idx, adapter in enumerate(arch_candidate):
-        alpha = nn.Parameter(torch.abs(torch.randn(12))) # parameters for each layer
+        alpha = nn.Parameter(torch.randn(12)) # parameters for each layer
         best_arch_score = float('inf')
         no_improve_counter = 0
 
         for step in range(num_iter): # sampling for each arch config
-            delta_lst = [torch.abs(torch.randn_like(alpha)*epsilon) for _ in range(K)]
+            delta_lst = [torch.randn_like(alpha)*epsilon for _ in range(K)]
             nas_scores = []
 
             for delta in delta_lst:
                 alpha_perturbed = alpha+delta
+                alpha_perturbed = torch.sigmoid(alpha_perturbed)
                 # alpha -> configuration update
                 adapter['alpha'] = alpha_perturbed.detach().clone()
             
@@ -289,14 +290,14 @@ def main(config_, save_path, args):
             alpha.data.add_(direction)
 
             current_best = float(torch.max(z))
-            if (current_best - best_score) > min_delta:
-                best_score = current_best
+            if (current_best - best_arch_score) > min_delta:
+                best_arch_score = current_best
                 no_improve_counter = 0
             else:
                 no_improve_counter += 1
             if local_rank == 0:
                 # log('model: #params={}'.format(utils.compute_num_params(model, text=True)))
-                log(f"[Adapter {idx+1} | Step {step}] ZICO: {current_best:.4f} | Best: {best_score:.4f} | Patience: {no_improve_counter}")
+                log(f"[Adapter {idx+1} | Step {step}] ZICO: {current_best:.4f} | Best: {best_arch_score:.4f} | Patience: {no_improve_counter}")
     
             if no_improve_counter >= patience:
                 print(f"Adapter {idx+1}: Early stopping triggered at step {step}.")
@@ -347,11 +348,11 @@ def main(config_, save_path, args):
                 'alpha': best_alpha
             })
 
-    # end search        
-    print(f"Best Adapter: Adapter{best_adapter_idx + 1}")
-    print(f"Inclusion mask (sigmoid): {torch.sigmoid(best_alpha)}")
+    # end search 
 
     if local_rank == 0:
+        log(f"Best Adapter: Adapter{best_adapter_idx + 1}|Final Best Score: {best_score}")
+        log(f"Inclusion mask (sigmoid): {torch.sigmoid(best_alpha)}")
         config['model']['args']['encoder_mode'].update(best_arch)
         save_path = save_name+"/best_arch.yaml"
         with open(save_path, 'w') as f:
