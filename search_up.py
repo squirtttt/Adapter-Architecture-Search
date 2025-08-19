@@ -250,6 +250,10 @@ def main(config_, save_path, args):
             for delta in delta_lst:
                 alpha_perturbed = alpha+delta
                 alpha_perturbed = torch.sigmoid(alpha_perturbed)
+
+                if dist.get_rank() != 0:
+                    pass
+                dist.broadcast(alpha_perturbed, src=0)
                 # alpha -> configuration update
                 adapter['alpha'] = alpha_perturbed.detach().clone()
             
@@ -287,6 +291,7 @@ def main(config_, save_path, args):
             z = torch.tensor(nas_scores, device=alpha.device, dtype=torch.float32)
             weights = torch.softmax((z-z.max())/tau, dim=0)
             direction = sum(w*d for w, d in zip(weights, delta_lst))
+            dist.broadcast(direction, src=0)
             alpha.data.add_(direction)
 
             current_best = float(torch.max(z))
