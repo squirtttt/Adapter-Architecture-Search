@@ -90,29 +90,17 @@ model:
       - 8
       - 11
       # adapter search << appended by prepare_training()
-      scale_factor: 32
-      prompt_num: 12
-      prompt_activation: GELU
-      prompt_layernum:
-      - 1
-      - 2
-      - 3
-      - 4
-      - 5
-      - 6
-      - 7
-      - 8
-      - 9
-      - 10
-      - 11
-      - 12
+      # scale_factor: 32
+      # prompt_activation: GELU
+      # alpha: [0., 1., ..]
+
 
 optimizer:
   name: adamw
   args:
     lr: 0.0002
 lr_min: 1.0e-7
-epoch_max: 20
+epoch_max: 20 # - CAMO
 
 
 multi_step_lr:
@@ -124,30 +112,19 @@ epoch_save: 1
 
 # search config
 search:
-  epoch_search_max: 10000
-  search_proxy: zico # zenscore, naswot
-  population_size: 512
-  patient: 10
+  patient: 5
+  iteration: 10
+  sample_size: 10
+  epsilon: 0.1
+  tau: 0.5
+  delta: 0.01
+  threshold: 0.5
   search_space:
     scale_factor:
     - 16
     - 32
     - 64
     - 128
-    - 256
-    prompt_num:
-    - 1
-    - 2
-    - 3
-    - 4
-    - 5
-    - 6
-    - 7
-    - 8
-    - 9
-    - 10
-    - 11
-    - 12
     prompt_activation:
     - GELU
     - ReLU

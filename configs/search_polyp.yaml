@@ -90,11 +90,22 @@ model:
       - 8
       - 11
       # adapter search << appended by prepare_training()
-      # 0.7469
+      # 0.7053
       scale_factor: 16
       prompt_activation: ReLU
-      alpha: [0., 1., 0., 1., 0., 0., 0., 0., 0., 1., 1., 1.]
-
+      alpha:
+      - 0.0
+      - 1.0
+      - 0.0
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 1.0
+      - 1.0
+      - 1.0
 
 optimizer:
   name: adamw
