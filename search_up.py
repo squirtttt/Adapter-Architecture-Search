@@ -239,7 +239,7 @@ def main(config_, save_path, args):
     }
 
     for idx, adapter in enumerate(arch_candidate):
-        alpha = nn.Parameter(torch.randn(12)) # parameters for each layer
+        alpha = nn.Parameter(torch.randn(12, device=device)) # parameters for each layer
         best_arch_score = float('-inf')
         no_improve_counter = 0
 
@@ -248,8 +248,7 @@ def main(config_, save_path, args):
             nas_scores = []
 
             for delta in delta_lst:
-                alpha_perturbed = alpha+delta
-                alpha_perturbed = torch.sigmoid(alpha_perturbed)
+                alpha_perturbed = torch.sigmoid(alpha+delta).contiguous()
 
                 if dist.get_rank() != 0:
                     pass
@@ -312,7 +311,8 @@ def main(config_, save_path, args):
         # alpha multiplied with hard-label
         with torch.no_grad():
             probs = torch.sigmoid(alpha) # sigmoid는 값의 범위에 따라 적용 여부가 달라짐
-            alpha_hard = (probs > threshold).float()
+            alpha_hard = (probs > threshold).float().to(device)
+        dist.broadcast(alpha_hard, src=0)
         adapter['alpha'] = alpha_hard.detach().clone()
         
         final_model = prepare_training(adapter, config)

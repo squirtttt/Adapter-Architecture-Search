@@ -62,3 +62,9 @@
 - 🧋8/18
   - alpha에 대한 parameter를 torch.abs()를 통해서 양수값으로만 연산하도록 변경
   - 지난 실험(8/9) 에서 발생한 에러에 대한 해결이 필요함 -- 에러 발생하는 즉시 수정 갈기기
+
+
+- 📮8/20
+  - broadcast로 인해서 발생하는 에러를 해결하기 위해 alpha, perturbed, delta 등의 값을 cuda로 옮겨서 broadcast 하는데 성공
+  - CAMO
+    - search iteration: 10, K: 5 로 줄인 값으로 실험
