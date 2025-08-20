@@ -248,10 +248,12 @@ def main(config_, save_path, args):
             nas_scores = []
 
             for delta in delta_lst:
-                alpha_perturbed = torch.sigmoid(alpha+delta).contiguous()
+                if local_rank == 0:
+                    alpha_perturbed = torch.sigmoid(alpha+delta).contiguous()
 
-                if dist.get_rank() != 0:
-                    pass
+                else:
+                    alpha_perturbed = torch.empty_like(alpha)
+                    
                 dist.broadcast(alpha_perturbed, src=0)
                 # alpha -> configuration update
                 adapter['alpha'] = alpha_perturbed.detach().clone()
@@ -287,9 +289,12 @@ def main(config_, save_path, args):
                     # log('model: #params={}'.format(utils.compute_num_params(model, text=True)))
                     log(f"current zico: {nas_score}")
             
-            z = torch.tensor(nas_scores, device=alpha.device, dtype=torch.float32)
-            weights = torch.softmax((z-z.max())/tau, dim=0)
-            direction = sum(w*d for w, d in zip(weights, delta_lst))
+            if local_rank==0:
+                z = torch.tensor(nas_scores, device=alpha.device, dtype=torch.float32)
+                weights = torch.softmax((z-z.max())/tau, dim=0)
+                direction = sum(w*d for w, d in zip(weights, delta_lst))
+
+
             dist.broadcast(direction, src=0)
             alpha.data.add_(direction)
 
@@ -312,6 +317,7 @@ def main(config_, save_path, args):
         with torch.no_grad():
             probs = torch.sigmoid(alpha) # sigmoid는 값의 범위에 따라 적용 여부가 달라짐
             alpha_hard = (probs > threshold).float().to(device)
+
         dist.broadcast(alpha_hard, src=0)
         adapter['alpha'] = alpha_hard.detach().clone()
         

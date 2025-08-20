@@ -121,8 +121,8 @@ search:
   threshold: 0.5
   search_space:
     scale_factor:
-    - 16
-    - 32
+    # - 16
+    # - 32
     - 64
     - 128
     prompt_activation:

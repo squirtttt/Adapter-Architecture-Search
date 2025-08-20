@@ -34,7 +34,7 @@ def tensor2PIL(tensor):
     return toPIL(tensor)
 
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
 
 
 def eval_psnr(loader, model, data_norm=None, eval_type=None, eval_bsize=None,
@@ -71,7 +71,7 @@ def eval_psnr(loader, model, data_norm=None, eval_type=None, eval_bsize=None,
 
     for batch in pbar:
         for k, v in batch.items():
-            batch[k] = v.cuda()
+            batch[k] = v.to(device) # cuda()
 
         inp = batch['inp']
 
@@ -107,8 +107,8 @@ if __name__ == '__main__':
     loader = DataLoader(dataset, batch_size=spec['batch_size'],
                         num_workers=8)
 
-    model = models.make(config['model']).cuda()
-    sam_checkpoint = torch.load(args.model, map_location='cuda:0')
+    model = models.make(config['model']).to(device) #cuda()
+    sam_checkpoint = torch.load(args.model, map_location='cuda:3')
     model.load_state_dict(sam_checkpoint, strict=True)
     
     metric1, metric2, metric3, metric4 = eval_psnr(loader, model,

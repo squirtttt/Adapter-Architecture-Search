@@ -41,7 +41,7 @@ test_dataset:
       inp_size: 1024
   batch_size: 1
 
-eval_type: cod
+eval_type: polyp
 sam_checkpoint: ./pretrained/sam_vit_b_01ec64.pth
 data_norm:
   inp:
