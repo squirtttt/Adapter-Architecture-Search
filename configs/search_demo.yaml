@@ -90,10 +90,9 @@ model:
       - 8
       - 11
       # adapter search << appended by prepare_training()
-      # scale_factor: 32
-      # prompt_activation: GELU
-      # alpha: [0., 1., ..]
-
+      scale_factor: 32
+      prompt_activation: ReLU
+      alpha: [0., 0., 1., 1., 1., 1., 1., 0., 1., 1., 1., 1.]
 
 optimizer:
   name: adamw
@@ -121,8 +120,8 @@ search:
   threshold: 0.5
   search_space:
     scale_factor:
-    # - 16
-    # - 32
+    - 16
+    - 32
     - 64
     - 128
     prompt_activation:

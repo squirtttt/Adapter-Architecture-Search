@@ -253,7 +253,7 @@ def main(config_, save_path, args):
 
                 else:
                     alpha_perturbed = torch.empty_like(alpha)
-                    
+
                 dist.broadcast(alpha_perturbed, src=0)
                 # alpha -> configuration update
                 adapter['alpha'] = alpha_perturbed.detach().clone()
@@ -292,9 +292,12 @@ def main(config_, save_path, args):
             if local_rank==0:
                 z = torch.tensor(nas_scores, device=alpha.device, dtype=torch.float32)
                 weights = torch.softmax((z-z.max())/tau, dim=0)
-                direction = sum(w*d for w, d in zip(weights, delta_lst))
+                direction = sum(w*d for w, d in zip(weights, delta_lst)) 
+            else: 
+                z = torch.zeros(len(nas_scores), device=alpha.device, dtype=torch.float32)
+                direction = torch.zeros_like(alpha)
 
-
+            dist.broadcast(z, src=0)
             dist.broadcast(direction, src=0)
             alpha.data.add_(direction)
 
@@ -349,7 +352,7 @@ def main(config_, save_path, args):
         loss, final_score, score_dict = compute_nas_score(arch_config = config, model=model, search_proxy='zico',train_loader=train_loader)
 
 
-        if final_score < best_score:
+        if final_score > best_score:
             best_score = final_score
             best_adapter_idx = idx
             best_alpha = alpha_hard.detach().clone()
