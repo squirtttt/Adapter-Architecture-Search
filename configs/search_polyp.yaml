@@ -41,7 +41,7 @@ test_dataset:
       inp_size: 1024
   batch_size: 1
 
-eval_type: polyp
+eval_type: cod # polyp
 sam_checkpoint: ./pretrained/sam_vit_b_01ec64.pth
 data_norm:
   inp:
@@ -78,9 +78,9 @@ model:
       prompt_type: highpass
       prompt_embed_dim: 256
       tuning_stage: 1234
-      handcrafted_tune: true
-      embedding_tune: true
-      adaptor: adaptor
+      handcrafted_tune: false #true
+      embedding_tune: false #true
+      adaptor: none # adaptor
       embed_dim: 768 #1280
       depth: 12
       num_heads: 12
@@ -91,21 +91,9 @@ model:
       - 11
       # adapter search << appended by prepare_training()
       # 0.7053
-      scale_factor: 16
+      scale_factor: 32
       prompt_activation: ReLU
-      alpha:
-      - 0.0
-      - 1.0
-      - 0.0
-      - 1.0
-      - 0.0
-      - 0.0
-      - 0.0
-      - 0.0
-      - 0.0
-      - 1.0
-      - 1.0
-      - 1.0
+      alpha: [0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]
 
 optimizer:
   name: adamw

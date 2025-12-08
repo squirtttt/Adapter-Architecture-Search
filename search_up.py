@@ -16,7 +16,7 @@ import datasets
 import models
 import utils
 from statistics import mean
-
+from ZeroShotProxy.compute_naswot import getnaswot
 import pdb
 
 
@@ -61,9 +61,9 @@ def compute_nas_score(arch_config, model=None, search_proxy='zico', train_loader
     if search_proxy == 'zico':
         nas_score = getzico(sam_model, train_loader, arch_config)
     elif search_proxy == 'zen':
-        nas_score = 0 #compute_zen_score.compute_nas_score(mlp_arch, )
+        nas_score = 0.0 # getzen(sam_model, train_loader, arch_config)
     elif search_proxy == 'naswot':
-        nas_score = 0 #compute_naswot_score.compute()
+        nas_score = getnaswot(sam_model, train_loader, arch_config)
 
     torch.cuda.empty_cache()
 
@@ -146,7 +146,7 @@ def getzico(model, train_loader, arch_config):
         
         grad_dict= getgrad(model, grad_dict,i)
     
-    #pdb.set_trace()    
+    #pdb.set_trace()
     res, score_dict = caculate_zico(grad_dict, arch_config)
     if pbar is not None:
         pbar.close()
@@ -225,7 +225,7 @@ def main(config_, save_path, args):
     tau = config['search']['tau'] # softmax temperature
     min_delta = config['search']['delta'] # minimum score difference
     threshold = config['search']['threshold']
-
+    proxy = args.proxy
     arch_candidate = generate_architecture_candidate(config) # only scale_factor, activation function
 
 
@@ -281,13 +281,14 @@ def main(config_, save_path, args):
                         model_total_params = sum(p.numel() for p in model.parameters())
                         model_grad_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
                         # print('model_grad_params:' + str(model_grad_params), '\nmodel_total_params:' + str(model_total_params))
-
+                
+                
                 # compute nas score
-                loss, nas_score, score_dict = compute_nas_score(arch_config = config, model=model, search_proxy='zico',train_loader=train_loader)
+                loss, nas_score, score_dict = compute_nas_score(arch_config = config, model=model, search_proxy=proxy, train_loader=train_loader)
                 nas_scores.append(nas_score)
                 if local_rank == 0:
                     # log('model: #params={}'.format(utils.compute_num_params(model, text=True)))
-                    log(f"current zico: {nas_score}")
+                    log(f"current {proxy}: {nas_score}")
             
             if local_rank==0:
                 z = torch.tensor(nas_scores, device=alpha.device, dtype=torch.float32)
@@ -309,7 +310,7 @@ def main(config_, save_path, args):
                 no_improve_counter += 1
             if local_rank == 0:
                 # log('model: #params={}'.format(utils.compute_num_params(model, text=True)))
-                log(f"[Adapter {idx+1} | Step {step}] ZICO: {current_best:.4f} | Best: {best_arch_score:.4f} | Patience: {no_improve_counter}")
+                log(f"[Adapter {idx+1} | Step {step}] score: {current_best:.4f} | Best: {best_arch_score:.4f} | Patience: {no_improve_counter}")
     
             if no_improve_counter >= patience:
                 print(f"Adapter {idx+1}: Early stopping triggered at step {step}.")
@@ -349,7 +350,7 @@ def main(config_, save_path, args):
                         
 
         # compute nas score
-        loss, final_score, score_dict = compute_nas_score(arch_config = config, model=model, search_proxy='zico',train_loader=train_loader)
+        loss, final_score, score_dict = compute_nas_score(arch_config = config, model=model, search_proxy=proxy ,train_loader=train_loader)
 
 
         if final_score > best_score:
@@ -377,6 +378,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default = './configs/search_demo.yaml')
     parser.add_argument('--name', default = None)
+    parser.add_argument('--proxy', default='zico')
     parser.add_argument('--tag', default = None)
     parser.add_argument('--local_rank', type=int, default=-1, help="")
     args = parser.parse_args()
