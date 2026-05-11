@@ -108,7 +108,7 @@ if __name__ == '__main__':
                         num_workers=8)
 
     model = models.make(config['model']).to(device) #cuda()
-    sam_checkpoint = torch.load(args.model, map_location='cuda:0')
+    sam_checkpoint = torch.load(args.model, map_location='cuda:3')
     model.load_state_dict(sam_checkpoint, strict=True)
     
     metric1, metric2, metric3, metric4 = eval_psnr(loader, model,

@@ -20,6 +20,71 @@ from ZeroShotProxy.compute_naswot import getnaswot
 import pdb
 
 
+class ScoreNormalizer:
+    """
+    Online Min-Max normalizer for NAS proxy scores.
+    Normalizes scores to [0, 1] range based on observed min/max values.
+    """
+    def __init__(self, margin=0.1):
+        """
+        Args:
+            margin: Small margin to avoid division by zero and provide buffer (default: 0.1)
+        """
+        self.min_score = float('inf')
+        self.max_score = float('-inf')
+        self.margin = margin
+        self.score_history = []
+
+    def update(self, score):
+        """Update min/max with new score observation."""
+        self.score_history.append(score)
+        self.min_score = min(self.min_score, score)
+        self.max_score = max(self.max_score, score)
+
+    def normalize(self, score):
+        """
+        Normalize score to [0, 1] range.
+        Returns 0.5 if insufficient data (min == max).
+        """
+        # Update statistics
+        self.update(score)
+
+        # Handle edge case: not enough variance
+        score_range = self.max_score - self.min_score
+        if score_range < 1e-8:
+            return 0.5
+
+        # Min-Max normalization with margin
+        normalized = (score - self.min_score) / (score_range + self.margin)
+        return max(0.0, min(1.0, normalized))  # Clamp to [0, 1]
+
+    def normalize_batch(self, scores):
+        """Normalize a batch of scores."""
+        # First pass: update statistics
+        for s in scores:
+            self.update(s)
+
+        # Second pass: normalize
+        return [self._normalize_with_current_stats(s) for s in scores]
+
+    def _normalize_with_current_stats(self, score):
+        """Normalize using current min/max (without updating)."""
+        score_range = self.max_score - self.min_score
+        if score_range < 1e-8:
+            return 0.5
+        normalized = (score - self.min_score) / (score_range + self.margin)
+        return max(0.0, min(1.0, normalized))
+
+    def get_stats(self):
+        """Return current statistics."""
+        return {
+            'min': self.min_score,
+            'max': self.max_score,
+            'range': self.max_score - self.min_score,
+            'count': len(self.score_history)
+        }
+
+
 torch.distributed.init_process_group(backend='nccl')
 local_rank = torch.distributed.get_rank()
 torch.cuda.set_device(local_rank)
@@ -238,6 +303,9 @@ def main(config_, save_path, args):
         'alpha': None
     }
 
+    # Initialize score normalizer for consistent 0-1 scaling across proxies
+    score_normalizer = ScoreNormalizer(margin=0.1)
+
     for idx, adapter in enumerate(arch_candidate):
         alpha = nn.Parameter(torch.randn(12, device=device)) # parameters for each layer
         best_arch_score = float('-inf')
@@ -284,11 +352,12 @@ def main(config_, save_path, args):
                 
                 
                 # compute nas score
-                loss, nas_score, score_dict = compute_nas_score(arch_config = config, model=model, search_proxy=proxy, train_loader=train_loader)
+                loss, nas_score_raw, score_dict = compute_nas_score(arch_config = config, model=model, search_proxy=proxy, train_loader=train_loader)
+                # Normalize score to [0, 1] range
+                nas_score = score_normalizer.normalize(nas_score_raw)
                 nas_scores.append(nas_score)
                 if local_rank == 0:
-                    # log('model: #params={}'.format(utils.compute_num_params(model, text=True)))
-                    log(f"current {proxy}: {nas_score}")
+                    log(f"current {proxy}: {nas_score_raw:.4f} (normalized: {nas_score:.4f})")
             
             if local_rank==0:
                 z = torch.tensor(nas_scores, device=alpha.device, dtype=torch.float32)
@@ -350,29 +419,78 @@ def main(config_, save_path, args):
                         
 
         # compute nas score
-        loss, final_score, score_dict = compute_nas_score(arch_config = config, model=model, search_proxy=proxy ,train_loader=train_loader)
+        loss, final_score_raw, score_dict = compute_nas_score(arch_config = config, model=model, search_proxy=proxy ,train_loader=train_loader)
+        # Normalize final score to [0, 1] range
+        final_score = score_normalizer.normalize(final_score_raw)
+        if local_rank == 0:
+            log(f"[Adapter {idx+1}] Final {proxy}: {final_score_raw:.4f} (normalized: {final_score:.4f})")
 
-
-        if final_score > best_score:
-            best_score = final_score
+        # Compare using raw score (not normalized) for fair comparison
+        if final_score_raw > best_score:
+            best_score = final_score_raw
             best_adapter_idx = idx
             best_alpha = alpha_hard.detach().clone()
             best_arch.update({
                 'scale_factor': adapter['scale_factor'],
                 'prompt_activation': adapter['prompt_activation'],
-                'alpha': best_alpha
+                'alpha': best_alpha.cpu().tolist()  # Convert to list for YAML serialization
             })
 
-    # end search 
+    # end search
 
     if local_rank == 0:
-        log(f"Best Adapter: Adapter{best_adapter_idx + 1}|Final Best Score: {best_score}")
-        log(f"Inclusion mask (sigmoid): {torch.sigmoid(best_alpha)}")
+        # Log final results
+        norm_stats = score_normalizer.get_stats()
+        log(f"=" * 60)
+        log(f"Search Completed!")
+        log(f"=" * 60)
+        log(f"Score stats - min: {norm_stats['min']:.4f}, max: {norm_stats['max']:.4f}, range: {norm_stats['range']:.4f}, samples: {norm_stats['count']}")
+        log(f"Best Adapter: Adapter {best_adapter_idx + 1}")
+        log(f"Best {proxy} Score: {best_score:.4f}")
+        log(f"Best Architecture:")
+        log(f"  - scale_factor: {best_arch['scale_factor']}")
+        log(f"  - prompt_activation: {best_arch['prompt_activation']}")
+        log(f"  - alpha (binary mask): {best_arch['alpha']}")
+        log(f"  - inclusion mask (sigmoid): {torch.sigmoid(best_alpha).cpu().tolist()}")
+        log(f"=" * 60)
+
         config['model']['args']['encoder_mode'].update(best_arch)
-        save_path = save_name+"/best_arch.yaml"
-        with open(save_path, 'w') as f:
+        # Create directory if it doesn't exist (save_path = ./save/<name>)
+        os.makedirs(save_path, exist_ok=True)
+
+        # Save best architecture config
+        arch_save_path = os.path.join(save_path, "best_arch.yaml")
+        with open(arch_save_path, 'w') as f:
             yaml.dump(config, f, sort_keys=False)
-        print(f'best architecture config saved at: {save_path}')
+        print(f'Best architecture config saved at: {arch_save_path}')
+
+        # Save search log summary
+        log_save_path = os.path.join(save_path, "search_log.txt")
+        with open(log_save_path, 'w') as f:
+            f.write(f"Search Configuration\n")
+            f.write(f"=" * 60 + "\n")
+            f.write(f"Proxy: {proxy}\n")
+            f.write(f"Patience: {patience}\n")
+            f.write(f"Iterations: {num_iter}\n")
+            f.write(f"Sample Size (K): {K}\n")
+            f.write(f"Epsilon: {epsilon}\n")
+            f.write(f"Tau: {tau}\n")
+            f.write(f"Threshold: {threshold}\n")
+            f.write(f"\nSearch Results\n")
+            f.write(f"=" * 60 + "\n")
+            f.write(f"Best Adapter Index: {best_adapter_idx + 1}\n")
+            f.write(f"Best {proxy} Score: {best_score:.4f}\n")
+            f.write(f"Best Architecture:\n")
+            f.write(f"  scale_factor: {best_arch['scale_factor']}\n")
+            f.write(f"  prompt_activation: {best_arch['prompt_activation']}\n")
+            f.write(f"  alpha: {best_arch['alpha']}\n")
+            f.write(f"\nScore Statistics\n")
+            f.write(f"=" * 60 + "\n")
+            f.write(f"Min Score: {norm_stats['min']:.4f}\n")
+            f.write(f"Max Score: {norm_stats['max']:.4f}\n")
+            f.write(f"Score Range: {norm_stats['range']:.4f}\n")
+            f.write(f"Total Samples: {norm_stats['count']}\n")
+        print(f'Search log saved at: {log_save_path}')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

@@ -9,6 +9,9 @@ import torch.distributed as dist
 K_matrix = None
 local_rank = None
 
+# Store activation patterns across batches for proper K matrix computation
+activation_patterns = []
+
 
 def network_weight_gaussian_init_adapter_only(net: nn.Module):
     # Adapter 모듈 이름 리스트 (예시)
@@ -41,63 +44,65 @@ def logdet(K):
 
 
 
-def counting_forward_hook(module, inp, out):
-    # K 행렬을 저장하기 위해 model.K를 사용한다고 가정
-    global K_matrix # global 변수 또는 model 객체 속성 사용
+def counting_forward_hook(module, _inp, out):
+    """
+    Forward hook to accumulate activation patterns for NASWOT score.
+
+    This hook is registered on Linear layers within lightweight_mlp.
+    We collect binarized activation patterns across all batches,
+    then compute K matrix at the end to handle batch_size=1 case.
+    """
+    global activation_patterns
 
     try:
-        if not module.visited_backwards:
-            return
-        if isinstance(inp, tuple):
-            inp = inp[0]
-        # 입력 텐서 평탄화 및 이진화 (ReLU/GELU의 입력값 I > 0)
-        inp = inp.view(inp.size(0), -1)
-        x = (inp > 0).float() 
-        
-        # 상관 행렬 K 누적
-        K_add = x @ x.t()
-        K2_add = (1. - x) @ (1. - x.t())
-        
-        # K_matrix에 누적
-        if K_matrix is None:
-            K_matrix = (K_add + K2_add).cpu().numpy()
-        else:
-            K_matrix += (K_add + K2_add).cpu().numpy()
-            
+        # Use OUTPUT of Linear layer (pre-activation values)
+        if isinstance(out, tuple):
+            out = out[0]
+
+        # Flatten and binarize: x_i = 1 if value > 0, else 0
+        out_flat = out.view(out.size(0), -1)
+        x = (out_flat > 0).float()
+
+        # Store activation pattern (will compute K matrix later)
+        activation_patterns.append(x.cpu())
+
     except Exception as err:
-        print('---- error on module: ', type(module))
+        print('---- error on counting_forward_hook, module: ', type(module))
         raise err
 
 
-# 역전파 완료를 표시하는 Backward Hook
-def counting_backward_hook(module, inp, out):
-    module.visited_backwards = True
+def caculate_naswot(max_samples=64):
+    """
+    Calculate NASWOT score from accumulated activation patterns.
 
-# Jacobian 계산을 통해 K 행렬 누적을 유도하는 함수
-def get_batch_jacobian_for_naswot(net, x):
-    net.zero_grad()
-    x.requires_grad_(True)
-    y = net(x) # 순전파: Forward Hook 호출 준비
-    y.backward(torch.ones_like(y)) # 역전파: Backward Hook 호출, Forward Hook 실행
-    # Jacobian (x.grad)는 NASWOT 스코어에 직접 사용되지 않음.
-    # 하지만 역전파 자체가 K 행렬 누적을 트리거하는 필수 단계임.
-    x.grad.detach() # 기울기 detach
-    return y.detach()
+    Args:
+        max_samples: Maximum number of samples to use for K matrix (for memory efficiency)
+    """
+    global activation_patterns
 
+    if len(activation_patterns) == 0:
+        return -1000.0
 
+    # Concatenate all activation patterns
+    all_patterns = torch.cat(activation_patterns, dim=0)
 
-def caculate_naswot():
-    global K_matrix
-    
-    # K 행렬에 대해 LogDet 계산
-    if K_matrix is None:
-        return -1000.0 # K 행렬이 누적되지 않은 경우 낮은 값 반환
-        
+    # Limit samples for memory efficiency
+    if all_patterns.size(0) > max_samples:
+        indices = torch.randperm(all_patterns.size(0))[:max_samples]
+        all_patterns = all_patterns[indices]
+
+    # Compute K matrix
+    x = all_patterns.float()
+    K = x @ x.t()
+    K2 = (1. - x) @ (1. - x.t())
+    K_matrix = (K + K2).numpy()
+
+    # Calculate logdet
     score = logdet(K_matrix)
-    
-    # 다음 NASWOT 계산을 위해 K_matrix 초기화
-    K_matrix = None 
-    
+
+    # Reset for next computation
+    activation_patterns = []
+
     return score
 
 
@@ -116,14 +121,15 @@ def getnaswot(model, train_loader, arch_config):
     Returns:
         tuple: (mean_loss, naswot_score, empty_dict)
     """
-    global K_matrix, local_rank
+    global K_matrix, local_rank, activation_patterns
 
     # Get distributed training info
     local_rank = dist.get_rank() if dist.is_initialized() else 0
     device = next(model.parameters()).device
 
-    # Reset K_matrix for fresh computation
+    # Reset global state for fresh computation
     K_matrix = None
+    activation_patterns = []
 
     model.train()
     loss_list = []
@@ -134,19 +140,18 @@ def getnaswot(model, train_loader, arch_config):
     else:
         pbar = None
 
-    # Register hooks on adapter activation functions
-    ACTIVATION_TYPES = (nn.ReLU, nn.GELU)
+    # Register hooks on Linear layers within adapter modules
+    # Note: We target Linear layers instead of activation functions because
+    # the activation function object is shared across all 12 layers (same nn.GELU/nn.ReLU instance)
+    # By hooking Linear layers, we get 12 separate hooks - one per adapter layer
     hooks = []
 
     for name, module in model.named_modules():
-        # Only target activation functions within adapter modules (prompt_generator)
-        is_adapter_module = "prompt_generator" in name and "lightweight_mlp_" in name
-        is_activation = isinstance(module, ACTIVATION_TYPES)
+        # Target Linear layers within lightweight_mlp (e.g., "lightweight_mlp_0.0", "lightweight_mlp_1.0", ...)
+        is_adapter_linear = "prompt_generator" in name and "lightweight_mlp_" in name and isinstance(module, nn.Linear)
 
-        if is_adapter_module and is_activation:
-            module.visited_backwards = False
+        if is_adapter_linear:
             hooks.append(module.register_forward_hook(counting_forward_hook))
-            hooks.append(module.register_backward_hook(counting_backward_hook))
 
     # Iterate through all batches (like ZiCo) to accumulate K matrix
     for _, batch in enumerate(train_loader):
@@ -177,7 +182,7 @@ def getnaswot(model, train_loader, arch_config):
         pbar.close()
 
     # Calculate NASWOT score
-    score = caculate_naswot()
+    score = caculate_naswot(max_samples=64)
 
     # Return format consistent with getzico: (mean_loss, score, score_dict)
     loss = [l.item() for l in loss_list]

@@ -1,9 +1,9 @@
 train_dataset:
   dataset:
     name: paired-image-folders
-    args:
-      root_path_1: ./load/Kvasir-SEG/images
-      root_path_2: ./load/Kvasir-SEG/masks
+    args: #train
+      root_path_1: ./load/Patholgy_PUMA/tissue_segmentation/train/images
+      root_path_2: ./load/Patholgy_PUMA/tissue_segmentation/train/masks_png_tumor
       cache: none
       split_key: train
   wrapper:
@@ -16,9 +16,9 @@ train_dataset:
 val_dataset:
   dataset:
     name: paired-image-folders
-    args:
-      root_path_1: ./load/Kvasir-SEG-test/images
-      root_path_2: ./load/Kvasir-SEG-test/masks
+    args: #val
+      root_path_1: ./load/Patholgy_PUMA/tissue_segmentation/val/images
+      root_path_2: ./load/Patholgy_PUMA/tissue_segmentation/val/masks_png_tumor
       cache: none
       split_key: test
   wrapper:
@@ -30,9 +30,9 @@ val_dataset:
 test_dataset:
   dataset:
     name: paired-image-folders
-    args:
-      root_path_1: ./load/Kvasir-SEG-test/images
-      root_path_2: ./load/Kvasir-SEG-test/masks
+    args: #test
+      root_path_1: ./load/Patholgy_PUMA/tissue_segmentation/test/images
+      root_path_2: ./load/Patholgy_PUMA/tissue_segmentation/test/masks_png_tumor
       cache: none
       split_key: test
   wrapper:
@@ -91,16 +91,16 @@ model:
       - 11
       # adapter search << appended by prepare_training()
       # 0.7053
-      scale_factor: 32
+      scale_factor: 128
       prompt_activation: ReLU
-      alpha: [0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]
+      alpha: [1., 0., 1., 0., 1., 0., 0., 0., 0., 1., 1., 1.]
 
 optimizer:
   name: adamw
   args:
     lr: 0.0002
 lr_min: 1.0e-7
-epoch_max: 120 # - polyp # 20 - camo
+epoch_max: 250 # - polyp # 20 - camo
 
 multi_step_lr:
   milestones:
@@ -113,7 +113,7 @@ epoch_save: 1
 search:
   patient: 5
   iteration: 20
-  sample_size: 5
+  sample_size: 10
   epsilon: 0.1
   tau: 0.5
   delta: 0.01

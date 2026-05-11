@@ -112,12 +112,12 @@ epoch_save: 1
 # search config
 search:
   patient: 5
-  iteration: 5
+  iteration: 20
   sample_size: 5
   epsilon: 0.1
   tau: 0.5
   delta: 0.01
-  threshold: 0.5
+  threshold: 0.7
   search_space:
     scale_factor:
     - 16

@@ -57,6 +57,9 @@ def eval_psnr(loader, model, eval_type=None):
     elif eval_type == 'cod':
         metric_fn = utils.calc_cod
         metric1, metric2, metric3, metric4 = 'sm', 'em', 'wfm', 'mae'
+    elif eval_type == 'polyp':
+        metric_fn = utils.calc_polyp
+        metric1, metric2, metric3, metric4 = 'mdice', 'miou', 'none', 'none'
 
     if local_rank == 0:
         pbar = tqdm(total=len(loader), leave=False, desc='val')
