@@ -79,8 +79,8 @@ epoch_save: 1
 search:
   search_strategy: hierarchical_perturbation  # options: original_zaas, random_candidate, hierarchical_perturbation
   search_mode: continuous_residual # options: continuous_residual, hard_insertion
-  N: 1 #20
-  K: 1 #5
+  N: 20
+  K: 5
   sigma_op: 0.1
   sigma_config: 0.1
   sigma_layer: 0.1
