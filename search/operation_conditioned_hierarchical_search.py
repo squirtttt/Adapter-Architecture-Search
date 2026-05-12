@@ -145,12 +145,23 @@ class OperationConditionedHierarchicalSearchController:
             self.search_mode = "hard_insertion"
 
         self.search_space = copy.deepcopy(search_cfg.get("operation_search_space", DEFAULT_SEARCH_SPACE))
+        self.identity_as_baseline = search_cfg.get("identity_as_baseline", True)
+        self.identity_baseline = None
+        if self.identity_as_baseline and "identity" in self.search_space:
+            # Identity has no trainable adapter parameters, so adapter-only ZiCo is
+            # always zero and it wastes perturbation samples. Keep it as a
+            # no-adapter baseline instead of a search operation.
+            self.identity_search_space = self.search_space.pop("identity")
+        else:
+            self.identity_search_space = None
         if self.search_strategy in {"original", "original_zaas"}:
             self.search_strategy = "original_zaas"
             self.search_space = {"mlp": copy.deepcopy(DEFAULT_SEARCH_SPACE["mlp"])}
             self.search_mode = "hard_insertion"
 
         self.operations = list(self.search_space.keys())
+        if not self.operations:
+            raise ValueError("operation search space is empty after removing identity baseline")
         self.K = search_cfg.get("K", search_cfg.get("perturbation_number", search_cfg.get("sample_size", 5)))
         self.N = search_cfg.get("N", search_cfg.get("iterations", search_cfg.get("iteration", 20)))
         self.sigma_op = search_cfg.get("sigma_op", 0.1)
@@ -317,6 +328,33 @@ class OperationConditionedHierarchicalSearchController:
             "adapter_params": int(adapter_params),
         }
 
+    def compute_identity_baseline(self):
+        if not self.identity_as_baseline or self.identity_baseline is not None:
+            return self.identity_baseline
+        decoded = {
+            "operation": "identity",
+            "config": {},
+            "gamma": torch.zeros_like(self.alpha_layer),
+            "mask": None,
+        }
+        score_info = self.compute_score(decoded)
+        self.identity_baseline = {
+            "operation": "identity",
+            "config": {},
+            "gamma": [0.0 for _ in range(len(self.alpha_layer))],
+            "zico_score": score_info["zico_score"],
+            "penalized_score": score_info["penalized_score"],
+            "adapter_params": score_info["adapter_params"],
+        }
+        if self.local_rank == 0:
+            self.log(
+                "[identity-baseline] "
+                f"ZiCo={score_info['zico_score']:.4f} "
+                f"score={score_info['penalized_score']:.4f} "
+                f"params={score_info['adapter_params']}"
+            )
+        return self.identity_baseline
+
     def update_logits(self, perturbations, decoded_samples, scores):
         weights = torch.softmax((scores - scores.max()) / self.softmax_temperature, dim=0)
         if self.search_strategy == "hierarchical_perturbation":
@@ -358,6 +396,7 @@ class OperationConditionedHierarchicalSearchController:
         return f"op={decoded['operation']}, config={decoded['config']}"
 
     def run_search(self):
+        self.compute_identity_baseline()
         for iteration in range(self.N):
             perturbations = []
             decoded_samples = []
@@ -416,6 +455,7 @@ class OperationConditionedHierarchicalSearchController:
             "penalized_score": final_score["penalized_score"],
             "adapter_params": final_score["adapter_params"],
             "search_space": self.search_space,
+            "identity_baseline": self.identity_baseline,
             "hyperparameters": {
                 "strategy": self.search_strategy,
                 "K": self.K,

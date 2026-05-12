@@ -90,15 +90,8 @@ search:
   tau: 0.5
   lambda_gamma: 0.1
   lambda_param: 0.0
+  identity_as_baseline: true
   operation_search_space:
-    identity:
-      dim: []
-      activation: []
-      gate: []
-      rank: []
-      freq_mode: []
-      attention_type: []
-      edge_mode: []
     mlp:
       dim: [16, 32, 64, 128]
       activation: [gelu, relu, silu]
