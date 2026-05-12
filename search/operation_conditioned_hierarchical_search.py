@@ -1,7 +1,7 @@
 import copy
+import gc
 import json
 import os
-from statistics import mean
 from typing import Dict, Optional
 
 import numpy as np
@@ -58,34 +58,46 @@ def freeze_sam_backbone_enable_adapter_training(model: nn.Module) -> None:
             param.requires_grad_(True)
 
 
-def collect_adapter_grads(model: nn.Module, grad_dict: dict, step_iter: int = 0):
+def update_zico_stats(model: nn.Module, stats: dict):
     for name, mod in model.named_modules():
         if "extended_adapters" not in name:
             continue
         if isinstance(mod, (nn.Linear, nn.Conv2d)) and mod.weight.grad is not None:
-            grad = mod.weight.grad.data.cpu().reshape(-1).numpy()
-            if step_iter == 0 or name not in grad_dict:
-                grad_dict[name] = [grad]
-            else:
-                grad_dict[name].append(grad)
-    return grad_dict
+            grad = mod.weight.grad.detach().cpu().reshape(-1).numpy().astype(np.float64, copy=False)
+            if name not in stats:
+                stats[name] = {
+                    "count": 1,
+                    "mean": grad.copy(),
+                    "m2": np.zeros_like(grad),
+                    "sum_abs": np.abs(grad),
+                }
+                continue
+
+            item = stats[name]
+            item["count"] += 1
+            delta = grad - item["mean"]
+            item["mean"] += delta / item["count"]
+            item["m2"] += delta * (grad - item["mean"])
+            item["sum_abs"] += np.abs(grad)
+    return stats
 
 
-def calculate_zico(grad_dict: dict):
-    if len(grad_dict) == 0:
+def calculate_zico(stats: dict):
+    if len(stats) == 0:
         return 0.0, {}
     score_sum = 0.0
     score_dict = {}
-    for modname, grads in grad_dict.items():
-        grads = np.array(grads)
-        nsr_std = np.std(grads, axis=0)
+    for modname, item in stats.items():
+        if item["count"] < 2:
+            continue
+        nsr_std = np.sqrt(item["m2"] / item["count"])
         nonzero_idx = np.nonzero(nsr_std)[0]
         if len(nonzero_idx) == 0:
             continue
-        nsr_mean_abs = np.mean(np.abs(grads), axis=0)
+        nsr_mean_abs = item["sum_abs"] / item["count"]
         tmpsum = np.sum(nsr_mean_abs[nonzero_idx] / nsr_std[nonzero_idx])
         if tmpsum > 0:
-            value = np.log(1 + tmpsum / grads.shape[1])
+            value = np.log(1 + tmpsum / item["mean"].shape[0])
             score_sum += value
             score_dict[modname] = value
     if len(score_dict) == 0:
@@ -93,31 +105,35 @@ def calculate_zico(grad_dict: dict):
     return score_sum / len(score_dict), score_dict
 
 
-def compute_adapter_zico(model, train_loader, device, local_rank):
+def compute_adapter_zico(model, train_loader, device, local_rank, max_batches=None):
     if not any(p.requires_grad for n, p in model.named_parameters() if "extended_adapters" in n):
         return 0.0, 0.0, {}
 
-    grad_dict = {}
+    zico_stats = {}
     model.train()
-    loss_list = []
-    pbar = tqdm(total=len(train_loader), leave=False, desc="zico") if local_rank == 0 else None
+    loss_sum = 0.0
+    loss_count = 0
+    total_batches = len(train_loader) if max_batches is None else min(len(train_loader), max_batches)
+    pbar = tqdm(total=total_batches, leave=False, desc="zico") if local_rank == 0 else None
     for i, batch in enumerate(train_loader):
+        if max_batches is not None and i >= max_batches:
+            break
         for k, v in batch.items():
             batch[k] = v.to(device)
         model.zero_grad()
         model.set_input(batch["inp"], batch["gt"])
         model.search_backward()
-        batch_loss = [torch.zeros_like(model.loss_G) for _ in range(dist.get_world_size())]
-        dist.all_gather(batch_loss, model.loss_G)
-        loss_list.extend(batch_loss)
-        grad_dict = collect_adapter_grads(model, grad_dict, i)
+        gathered_loss = [torch.zeros_like(model.loss_G.detach()) for _ in range(dist.get_world_size())]
+        dist.all_gather(gathered_loss, model.loss_G.detach())
+        loss_sum += sum(loss.item() for loss in gathered_loss)
+        loss_count += len(gathered_loss)
+        zico_stats = update_zico_stats(model, zico_stats)
         if pbar is not None:
             pbar.update(1)
     if pbar is not None:
         pbar.close()
-    zico_score, score_dict = calculate_zico(grad_dict)
-    losses = [i.item() for i in loss_list]
-    return mean(losses) if losses else 0.0, zico_score, score_dict
+    zico_score, score_dict = calculate_zico(zico_stats)
+    return loss_sum / loss_count if loss_count else 0.0, zico_score, score_dict
 
 
 class OperationConditionedHierarchicalSearchController:
@@ -164,6 +180,7 @@ class OperationConditionedHierarchicalSearchController:
             raise ValueError("operation search space is empty after removing identity baseline")
         self.K = search_cfg.get("K", search_cfg.get("perturbation_number", search_cfg.get("sample_size", 5)))
         self.N = search_cfg.get("N", search_cfg.get("iterations", search_cfg.get("iteration", 20)))
+        self.max_zico_batches = search_cfg.get("max_zico_batches")
         self.sigma_op = search_cfg.get("sigma_op", 0.1)
         self.sigma_config = search_cfg.get("sigma_config", 0.1)
         self.sigma_layer = search_cfg.get("sigma_layer", 0.1)
@@ -313,7 +330,13 @@ class OperationConditionedHierarchicalSearchController:
         ).module
         model = self.load_checkpoint_and_freeze(model)
 
-        _, zico_score, _ = compute_adapter_zico(model, self.train_loader, self.device, self.local_rank)
+        _, zico_score, _ = compute_adapter_zico(
+            model,
+            self.train_loader,
+            self.device,
+            self.local_rank,
+            max_batches=self.max_zico_batches,
+        )
         adapter_params = count_adapter_params(model)
         gamma_or_mask = decoded["gamma"] if self.search_mode != "hard_insertion" else decoded["mask"]
         penalized_score = (
@@ -321,6 +344,8 @@ class OperationConditionedHierarchicalSearchController:
             - self.lambda_gamma * float(gamma_or_mask.sum().item())
             - self.lambda_param * adapter_params
         )
+        del model
+        gc.collect()
         torch.cuda.empty_cache()
         return {
             "zico_score": float(zico_score),
@@ -468,6 +493,7 @@ class OperationConditionedHierarchicalSearchController:
                 "eta_layer": self.eta_layer,
                 "lambda_gamma": self.lambda_gamma,
                 "lambda_param": self.lambda_param,
+                "max_zico_batches": self.max_zico_batches,
             },
         }
 

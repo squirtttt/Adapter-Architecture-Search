@@ -81,6 +81,7 @@ search:
   search_mode: continuous_residual # options: continuous_residual, hard_insertion
   N: 20
   K: 5
+  max_zico_batches: 500
   sigma_op: 0.1
   sigma_config: 0.1
   sigma_layer: 0.1
@@ -88,7 +89,7 @@ search:
   eta_config: 1.0
   eta_layer: 1.0
   tau: 0.5
-  lambda_gamma: 0.1
+  lambda_gamma: 0.01
   lambda_param: 0.0
   identity_as_baseline: true
   operation_search_space:
