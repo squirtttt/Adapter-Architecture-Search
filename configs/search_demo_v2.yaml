@@ -88,7 +88,7 @@ search:
   eta_config: 1.0
   eta_layer: 1.0
   tau: 0.5
-  lambda_gamma: 0.01
+  lambda_gamma: 0.1
   lambda_param: 0.0
   operation_search_space:
     identity:

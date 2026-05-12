@@ -10,15 +10,16 @@ dependencies:
   - pytorch=1.13.1
   - torchvision=0.14.1
   - pytorch-cuda=11.7
+  - mkl<2024.1
   - numpy=1.20.3
   - scipy=1.10.1
   - scikit-learn=1.2.2
   - pillow=9.4.0
   - pyyaml=6.0.2
-  - matplotlib=3.7.5
-  - ipython=8.12.3
   - tqdm=4.65.2
   - pip:
+      - matplotlib==3.7.5
+      - ipython==8.12.3
       - imageio==2.9.0
       - opencv-python==4.7.0.72
       - terminaltables==3.1.10

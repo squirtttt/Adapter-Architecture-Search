@@ -9,3 +9,5 @@ save/
 
 # pyc files ignore
 *.pyc
+__pycache__/
+*.py[cod]
