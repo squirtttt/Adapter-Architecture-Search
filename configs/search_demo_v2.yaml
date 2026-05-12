@@ -1,0 +1,125 @@
+train_dataset:
+  dataset:
+    name: paired-image-folders
+    args:
+      root_path_1: ./load/CAMO/Images/Train
+      root_path_2: ./load/CAMO/GT
+      cache: none
+      split_key: train
+  wrapper:
+    name: train
+    args:
+      inp_size: 1024
+      augment: false
+  batch_size: 1
+
+val_dataset:
+  dataset:
+    name: paired-image-folders
+    args:
+      root_path_1: ./load/CAMO/Images/Test
+      root_path_2: ./load/CAMO/GT
+      cache: none
+      split_key: test
+  wrapper:
+    name: val
+    args:
+      inp_size: 1024
+  batch_size: 1
+
+eval_type: cod
+sam_checkpoint: ./pretrained/sam_vit_b_01ec64.pth
+data_norm:
+  inp:
+    sub: [0.5]
+    div: [0.5]
+  gt:
+    sub: [0.5]
+    div: [0.5]
+model:
+  name: repeated_adapter_sam
+  args:
+    inp_size: 1024
+    loss: iou
+    encoder_mode:
+      name: sam_v2
+      img_size: 1024
+      mlp_ratio: 4
+      patch_size: 16
+      qkv_bias: true
+      use_rel_pos: true
+      window_size: 14
+      out_chans: 256
+      prompt_embed_dim: 256
+      embed_dim: 768
+      depth: 12
+      num_heads: 12
+      global_attn_indexes: [2, 5, 8, 11]
+      extended_adapter:
+        primitive_type: identity
+        dim:
+        activation:
+        gate:
+        rank:
+        freq_mode:
+        attention_type:
+        edge_mode:
+        search_mode: continuous
+        gamma: [0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]
+
+optimizer:
+  name: adamw
+  args:
+    lr: 0.0002
+lr_min: 1.0e-7
+epoch_max: 20
+epoch_val: 1
+epoch_save: 1
+
+search:
+  search_strategy: hierarchical_perturbation  # options: original_zaas, random_candidate, hierarchical_perturbation
+  search_mode: continuous_residual # options: continuous_residual, hard_insertion
+  N: 1 #20
+  K: 1 #5
+  sigma_op: 0.1
+  sigma_config: 0.1
+  sigma_layer: 0.1
+  eta_op: 1.0
+  eta_config: 1.0
+  eta_layer: 1.0
+  tau: 0.5
+  lambda_gamma: 0.01
+  lambda_param: 0.0
+  operation_search_space:
+    identity:
+      dim: []
+      activation: []
+      gate: []
+      rank: []
+      freq_mode: []
+      attention_type: []
+      edge_mode: []
+    mlp:
+      dim: [16, 32, 64, 128]
+      activation: [gelu, relu, silu]
+    gated_mlp:
+      dim: [16, 32, 64, 128]
+      gate: [geglu, swiglu]
+    dwconv:
+      dim: [16, 32, 64, 128]
+      activation: [gelu, relu, silu]
+    low_rank:
+      rank: [4, 8, 16]
+    frequency:
+      dim: [16, 32, 64]
+      activation: [gelu, silu]
+      freq_mode: [avg_highpass, laplacian, token_smoothing]
+    channel_attention:
+      dim: [16, 32, 64]
+      activation: [gelu, silu]
+      attention_type: [se, eca]
+    edge_aware:
+      dim: [16, 32, 64]
+      activation: [gelu, silu]
+      edge_mode: [sobel, laplacian, dw_gradient]
+  alpha_layer: [0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]

@@ -12,6 +12,19 @@ import random
 from datasets import register
 
 
+IMG_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff'}
+
+
+def list_image_files(path):
+    files = []
+    for root, _, filenames in os.walk(path):
+        for filename in filenames:
+            ext = os.path.splitext(filename)[1].lower()
+            if ext in IMG_EXTENSIONS:
+                files.append(os.path.join(root, filename))
+    return sorted(files)
+
+
 @register('image-folder')
 class ImageFolder(Dataset):
     def __init__(self, path,  split_file=None, split_key=None, first_k=None, size=None,
@@ -77,12 +90,58 @@ class ImageFolder(Dataset):
 @register('paired-image-folders')
 class PairedImageFolders(Dataset):
 
-    def __init__(self, root_path_1, root_path_2, **kwargs):
-        self.dataset_1 = ImageFolder(root_path_1, **kwargs)
-        self.dataset_2 = ImageFolder(root_path_2, **kwargs, mask=True)
+    def __init__(self, root_path_1, root_path_2, first_k=None, repeat=1, cache='none', **kwargs):
+        self.root_path_1 = root_path_1
+        self.root_path_2 = root_path_2
+        self.repeat = repeat
+        self.cache = cache
+
+        image_files = list_image_files(root_path_1)
+        mask_files = list_image_files(root_path_2)
+        mask_by_stem = {
+            os.path.splitext(os.path.basename(path))[0]: path
+            for path in mask_files
+        }
+
+        self.files = []
+        missing = []
+        for image_path in image_files:
+            stem = os.path.splitext(os.path.basename(image_path))[0]
+            mask_path = mask_by_stem.get(stem)
+            if mask_path is None:
+                missing.append(image_path)
+                continue
+            self.files.append((image_path, mask_path))
+
+        if first_k is not None:
+            self.files = self.files[:first_k]
+
+        if not self.files:
+            raise RuntimeError(
+                f'No paired images found between {root_path_1} and {root_path_2}. '
+                f'Found {len(image_files)} images and {len(mask_files)} masks.'
+            )
+
+        if missing:
+            print(
+                f'[PairedImageFolders] skipped {len(missing)} images without matching masks. '
+                f'Example: {missing[0]}'
+            )
+
+        if self.cache == 'in_memory':
+            self.files = [self._load_pair(image_path, mask_path) for image_path, mask_path in self.files]
 
     def __len__(self):
-        return len(self.dataset_1)
+        return len(self.files) * self.repeat
 
     def __getitem__(self, idx):
-        return self.dataset_1[idx], self.dataset_2[idx]
+        pair = self.files[idx % len(self.files)]
+        if self.cache == 'in_memory':
+            return pair
+        image_path, mask_path = pair
+        return self._load_pair(image_path, mask_path)
+
+    def _load_pair(self, image_path, mask_path):
+        image = Image.open(image_path).convert('RGB')
+        mask = Image.open(mask_path).convert('L')
+        return image, mask

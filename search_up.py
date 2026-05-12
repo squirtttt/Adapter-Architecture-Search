@@ -49,6 +49,7 @@ class ScoreNormalizer:
         # Update statistics
         self.update(score)
 
+
         # Handle edge case: not enough variance
         score_range = self.max_score - self.min_score
         if score_range < 1e-8:

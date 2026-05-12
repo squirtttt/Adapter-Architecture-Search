@@ -1,23 +1,37 @@
-imageio==2.9.0
-ipython~=8.11.0
-matplotlib~=3.1.2
-opencv-python~=4.7.0.72
-PyYAML~=6.0
-scikit-learn~=1.2.2
-scipy~=1.10.1
+# Minimal pip requirements for the existing `aas` conda environment.
+#
+# Checked `aas` environment:
+#   Python      3.8.20
+#   torch       1.13.1
+#   torchvision 0.14.1
+#   CUDA        11.7
+#   mmcv        1.6.0
+#
+# Install PyTorch/CUDA with conda, not pip, to avoid replacing the working
+# GPU stack in `aas`.
 
-tqdm~=4.51.0
-# torch~=1.13.0+cu116
-numpy~=1.20.3
-typing~=3.7.4.3
-terminaltables~=3.1.10
-Pillow~=9.4.0
-# torchvision~=0.14.0+cu116
-tensorboardX~=2.6
-# onnxruntime~=1.13.1 # dependecy conflict
-setuptools~=67.6.1
-timm~=0.3.2
-easydict~=1.10
-attr~=0.3.2
-thop~=0.1.1.post2209072238
-torchsummary~=1.5.1
+imageio==2.9.0
+ipython==8.12.3
+matplotlib==3.7.5
+opencv-python==4.7.0.72
+PyYAML==6.0.2
+scikit-learn==1.2.2
+scipy==1.10.1
+tqdm==4.65.2
+numpy==1.20.3
+terminaltables==3.1.10
+Pillow==9.4.0
+tensorboardX==2.6.2.2
+setuptools==67.6.1
+easydict==1.13
+thop==0.1.1.post2209072238
+torchsummary==1.5.1
+
+# Required by the bundled mmseg-style modules. The repo allows mmcv <= 1.7.0,
+# and the current `aas` environment already has 1.6.0.
+mmcv==1.6.0
+
+# Not required by the current ZAAS/SAM-Adapter search path. The old timm 0.3.x
+# package is incompatible with torch 1.13 because it imports torch._six.
+# Install only if you later add a timm-dependent model.
+# timm==0.6.13
