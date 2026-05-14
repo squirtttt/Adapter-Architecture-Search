@@ -58,18 +58,19 @@ def eval_psnr(loader, model, eval_type=None):
 
     pbar = tqdm(total=len(loader), leave=False, desc="val") if local_rank == 0 else None
     pred_list, gt_list = [], []
-    for batch in loader:
-        for k, v in batch.items():
-            batch[k] = v.cuda()
-        pred = torch.sigmoid(model.infer(batch["inp"]))
-        batch_pred = [torch.zeros_like(pred) for _ in range(dist.get_world_size())]
-        batch_gt = [torch.zeros_like(batch["gt"]) for _ in range(dist.get_world_size())]
-        dist.all_gather(batch_pred, pred)
-        dist.all_gather(batch_gt, batch["gt"])
-        pred_list.extend(batch_pred)
-        gt_list.extend(batch_gt)
-        if pbar is not None:
-            pbar.update(1)
+    with torch.inference_mode():
+        for batch in loader:
+            for k, v in batch.items():
+                batch[k] = v.cuda()
+            pred = torch.sigmoid(model.infer(batch["inp"]))
+            batch_pred = [torch.zeros_like(pred) for _ in range(dist.get_world_size())]
+            batch_gt = [torch.zeros_like(batch["gt"]) for _ in range(dist.get_world_size())]
+            dist.all_gather(batch_pred, pred)
+            dist.all_gather(batch_gt, batch["gt"])
+            pred_list.extend(item.cpu() for item in batch_pred)
+            gt_list.extend(item.cpu() for item in batch_gt)
+            if pbar is not None:
+                pbar.update(1)
     if pbar is not None:
         pbar.close()
     result1, result2, result3, result4 = metric_fn(torch.cat(pred_list, 1), torch.cat(gt_list, 1))
