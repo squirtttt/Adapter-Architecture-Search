@@ -339,6 +339,8 @@ class OperationConditionedHierarchicalSearchController:
         )
         adapter_params = count_adapter_params(model)
         gamma_or_mask = decoded["gamma"] if self.search_mode != "hard_insertion" else decoded["mask"]
+        if gamma_or_mask is None:
+            gamma_or_mask = decoded["gamma"]
         penalized_score = (
             float(zico_score)
             - self.lambda_gamma * float(gamma_or_mask.sum().item())
@@ -360,7 +362,7 @@ class OperationConditionedHierarchicalSearchController:
             "operation": "identity",
             "config": {},
             "gamma": torch.zeros_like(self.alpha_layer),
-            "mask": None,
+            "mask": torch.zeros_like(self.alpha_layer),
         }
         score_info = self.compute_score(decoded)
         self.identity_baseline = {
