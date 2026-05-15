@@ -103,7 +103,7 @@ search:
   eta_config: 1.0
   eta_layer: 2.0
   tau: 0.5
-  lambda_gamma: 0.001
+  lambda_gamma: 0.01
   lambda_param: 0.0
   identity_as_baseline: true
   operation_search_space:

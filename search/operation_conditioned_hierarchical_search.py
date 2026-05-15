@@ -464,23 +464,50 @@ class OperationConditionedHierarchicalSearchController:
     def decode_final_architecture(self):
         return self.decode_candidate(final=True)
 
-    def export_best_config(self, save_path: str):
-        final_decoded = self.decode_final_architecture()
-        final_score = self.compute_score(final_decoded)
-        gamma = final_decoded["gamma"].detach().cpu()
-        mask = final_decoded["mask"]
+    def _serialize_decoded(self, decoded, score_info):
+        gamma = decoded["gamma"].detach().cpu()
+        mask = decoded["mask"]
         if mask is not None:
             mask = mask.detach().cpu()
-
-        result = {
-            "operation": final_decoded["operation"],
-            "config": final_decoded["config"],
+        return {
+            "operation": decoded["operation"],
+            "config": copy.deepcopy(decoded["config"]),
             "gamma": [float(v) for v in gamma.tolist()],
             "binary_mask": None if mask is None else [int(v) for v in mask.tolist()],
             "search_mode": self.search_mode,
-            "zico_score": final_score["zico_score"],
-            "penalized_score": final_score["penalized_score"],
-            "adapter_params": final_score["adapter_params"],
+            "zico_score": score_info["zico_score"],
+            "penalized_score": score_info["penalized_score"],
+            "adapter_params": score_info["adapter_params"],
+        }
+
+    def export_best_config(self, save_path: str):
+        final_decoded = self.decode_final_architecture()
+        final_score = self.compute_score(final_decoded)
+
+        if self.best_decoded is None:
+            best_decoded = final_decoded
+            best_score = final_score
+        else:
+            best_decoded = {
+                "operation": self.best_decoded["operation"],
+                "config": copy.deepcopy(self.best_decoded["config"]),
+                "gamma": self.best_decoded["gamma"],
+                "mask": self.best_decoded["mask"],
+            }
+            best_score = {
+                "zico_score": self.best_zico_score,
+                "penalized_score": self.best_score,
+                "adapter_params": self.best_adapter_params,
+            }
+
+        best_result = self._serialize_decoded(best_decoded, best_score)
+        final_result = self._serialize_decoded(final_decoded, final_score)
+
+        result = {
+            **best_result,
+            "selection": "best_sampled",
+            "best_sampled": best_result,
+            "final_decoded": final_result,
             "search_space": self.search_space,
             "identity_baseline": self.identity_baseline,
             "hyperparameters": {
@@ -501,15 +528,25 @@ class OperationConditionedHierarchicalSearchController:
 
         os.makedirs(save_path, exist_ok=True)
         json_path = os.path.join(save_path, "searched_operation_conditioned_zaas_config.json")
+        _, _, _, best_cfg = self.build_candidate_model(best_decoded)
+        best_cfg["model"]["name"] = "repeated_adapter_sam"
         _, _, _, final_cfg = self.build_candidate_model(final_decoded)
         final_cfg["model"]["name"] = "repeated_adapter_sam"
         yaml_path = os.path.join(save_path, "best_arch_hierarchical_v2.yaml")
+        best_yaml_path = os.path.join(save_path, "best_sampled_arch_hierarchical_v2.yaml")
+        final_yaml_path = os.path.join(save_path, "final_decoded_arch_hierarchical_v2.yaml")
 
         if self.local_rank == 0:
             with open(json_path, "w") as f:
                 json.dump(result, f, indent=2)
             with open(yaml_path, "w") as f:
+                yaml.dump(best_cfg, f, sort_keys=False)
+            with open(best_yaml_path, "w") as f:
+                yaml.dump(best_cfg, f, sort_keys=False)
+            with open(final_yaml_path, "w") as f:
                 yaml.dump(final_cfg, f, sort_keys=False)
             self.log(f"Operation-conditioned ZAAS JSON saved at: {json_path}")
-            self.log(f"Trainable final config saved at: {yaml_path}")
+            self.log(f"Best sampled trainable config saved at: {yaml_path}")
+            self.log(f"Best sampled trainable config also saved at: {best_yaml_path}")
+            self.log(f"Final decoded trainable config saved at: {final_yaml_path}")
         return result
