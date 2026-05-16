@@ -78,9 +78,9 @@ epoch_save: 1
 
 search:
   search_strategy: hierarchical_perturbation  # options: original_zaas, random_candidate, hierarchical_perturbation
-  search_mode: hard_insertion # options: continuous_residual, hard_insertion
+  search_mode: continuous_residual # options: continuous_residual, hard_insertion
   N: 20
-  K: 5
+  K: 7
   max_zico_batches: 500
   sigma_op: 0.1
   sigma_config: 0.1
@@ -89,7 +89,7 @@ search:
   eta_config: 1.0
   eta_layer: 2.0
   tau: 0.5
-  lambda_gamma: 0.0
+  lambda_gamma: 0.01
   lambda_param: 0.0
   identity_as_baseline: true
   operation_search_space:

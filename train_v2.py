@@ -1,5 +1,7 @@
 import argparse
+import json
 import os
+import time
 
 import torch
 import torch.distributed as dist
@@ -136,14 +138,31 @@ def main(config_, save_path, args):
         print("model_grad_params:" + str(trainable), "\nmodel_total_params:" + str(total))
 
     max_val_v = -1e18
+    train_start_time = time.time()
+    max_peak_memory_mb = 0.0
+    epoch_efficiency = []
     for epoch in range(epoch_start, config["epoch_max"] + 1):
+        epoch_start_time = time.time()
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats(device)
         train_loader.sampler.set_epoch(epoch)
         train_loss = train(train_loader, model)
         lr_scheduler.step()
+        epoch_seconds = time.time() - epoch_start_time
+        peak_memory_mb = torch.cuda.max_memory_allocated(device) / (1024 ** 2) if torch.cuda.is_available() else 0.0
+        max_peak_memory_mb = max(max_peak_memory_mb, peak_memory_mb)
+        epoch_efficiency.append({
+            "epoch": epoch,
+            "epoch_seconds": epoch_seconds,
+            "estimated_gpu_hours": epoch_seconds * dist.get_world_size() / 3600,
+            "peak_memory_mb": peak_memory_mb,
+        })
 
         if local_rank == 0:
             writer.add_scalar("lr", optimizer.param_groups[0]["lr"], epoch)
             writer.add_scalars("loss", {"train G": train_loss}, epoch)
+            writer.add_scalar("efficiency/epoch_seconds", epoch_seconds, epoch)
+            writer.add_scalar("efficiency/peak_memory_mb", peak_memory_mb, epoch)
             save(model, save_path, "last")
 
         if config.get("epoch_val") is not None and epoch % config["epoch_val"] == 0:
@@ -156,6 +175,25 @@ def main(config_, save_path, args):
                     max_val_v = result1
                     save(model, save_path, "best")
                 writer.flush()
+
+    if local_rank == 0:
+        total_seconds = time.time() - train_start_time
+        efficiency = {
+            "total_train_seconds": total_seconds,
+            "estimated_gpu_hours": total_seconds * dist.get_world_size() / 3600,
+            "epochs": config["epoch_max"] - epoch_start + 1,
+            "world_size": dist.get_world_size(),
+            "max_peak_memory_mb": max_peak_memory_mb,
+            "epoch_efficiency": epoch_efficiency,
+        }
+        with open(os.path.join(save_path, "training_efficiency.json"), "w") as f:
+            json.dump(efficiency, f, indent=2)
+        log(
+            "training efficiency: "
+            f"seconds={total_seconds:.1f}, "
+            f"gpu_hours={efficiency['estimated_gpu_hours']:.4f}, "
+            f"max_mem={max_peak_memory_mb:.0f}MB"
+        )
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ import copy
 import gc
 import json
 import os
+import time
 from typing import Dict, Optional
 
 import numpy as np
@@ -16,6 +17,50 @@ import models
 import models.repeated_adapter_sam
 import utils
 from models.mmseg.models.sam.image_encoder_v2 import count_adapter_params
+
+
+def estimate_adapter_macs(decoded, embed_dim=768, image_size=1024, patch_size=16):
+    op = decoded["operation"]
+    cfg = decoded["config"]
+    gamma = decoded["gamma"].detach().cpu()
+    h = image_size // patch_size
+    w = image_size // patch_size
+    tokens = h * w
+
+    dim = cfg.get("dim")
+    rank = cfg.get("rank")
+    per_layer = 0
+    if op == "identity":
+        per_layer = 0
+    elif op == "mlp":
+        per_layer = tokens * (embed_dim * dim + dim * embed_dim)
+    elif op == "gated_mlp":
+        per_layer = tokens * (embed_dim * (2 * dim) + dim * embed_dim)
+    elif op == "dwconv":
+        per_layer = tokens * (embed_dim * dim + dim * embed_dim + dim * 3 * 3)
+    elif op == "low_rank":
+        per_layer = tokens * (embed_dim * rank + rank * embed_dim)
+    elif op == "frequency":
+        per_layer = tokens * (embed_dim * dim + dim * embed_dim + dim * dim + dim * dim + (2 * dim) * dim)
+    elif op == "channel_attention":
+        hidden = max(1, dim // 4)
+        per_layer = tokens * (embed_dim * dim + dim * embed_dim) + dim * hidden + hidden * dim
+    elif op == "edge_aware":
+        per_layer = tokens * (embed_dim * dim + dim * embed_dim + dim * dim + dim * 3 * 3)
+
+    actual_layers = int((gamma > 0).sum().item())
+    effective_layers = float(gamma.sum().item())
+    actual_macs = int(per_layer * actual_layers)
+    effective_macs = float(per_layer * effective_layers)
+    return {
+        "adapter_macs_per_layer": int(per_layer),
+        "adapter_actual_macs": actual_macs,
+        "adapter_actual_gmacs": actual_macs / 1e9,
+        "adapter_effective_macs": effective_macs,
+        "adapter_effective_gmacs": effective_macs / 1e9,
+        "adapter_active_layers": actual_layers,
+        "adapter_effective_layers": effective_layers,
+    }
 
 
 DEFAULT_SEARCH_SPACE = {
@@ -205,6 +250,11 @@ class OperationConditionedHierarchicalSearchController:
         self.best_zico_score = 0.0
         self.best_decoded = None
         self.best_adapter_params = 0
+        self.search_start_time = None
+        self.total_candidate_evals = 0
+        self.total_zico_batches = 0
+        self.total_candidate_seconds = 0.0
+        self.max_peak_memory_mb = 0.0
 
     def _empty_eps(self):
         return {
@@ -320,6 +370,9 @@ class OperationConditionedHierarchicalSearchController:
         return model
 
     def compute_score(self, decoded):
+        start_time = time.time()
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats(self.device)
         model, _, _, _ = self.build_candidate_model(decoded)
         model = torch.nn.parallel.DistributedDataParallel(
             model.cuda(),
@@ -330,7 +383,7 @@ class OperationConditionedHierarchicalSearchController:
         ).module
         model = self.load_checkpoint_and_freeze(model)
 
-        _, zico_score, _ = compute_adapter_zico(
+        zico_loss, zico_score, _ = compute_adapter_zico(
             model,
             self.train_loader,
             self.device,
@@ -346,6 +399,21 @@ class OperationConditionedHierarchicalSearchController:
             - self.lambda_gamma * float(gamma_or_mask.sum().item())
             - self.lambda_param * adapter_params
         )
+        elapsed_seconds = time.time() - start_time
+        peak_memory_mb = 0.0
+        if torch.cuda.is_available():
+            peak_memory_mb = torch.cuda.max_memory_allocated(self.device) / (1024 ** 2)
+        macs_info = estimate_adapter_macs(
+            decoded,
+            embed_dim=self.config["model"]["args"]["encoder_mode"]["embed_dim"],
+            image_size=self.config["model"]["args"]["inp_size"],
+            patch_size=self.config["model"]["args"]["encoder_mode"]["patch_size"],
+        )
+        zico_batches = len(self.train_loader) if self.max_zico_batches is None else min(len(self.train_loader), self.max_zico_batches)
+        self.total_candidate_evals += 1
+        self.total_zico_batches += zico_batches
+        self.total_candidate_seconds += elapsed_seconds
+        self.max_peak_memory_mb = max(self.max_peak_memory_mb, peak_memory_mb)
         del model
         gc.collect()
         torch.cuda.empty_cache()
@@ -353,6 +421,11 @@ class OperationConditionedHierarchicalSearchController:
             "zico_score": float(zico_score),
             "penalized_score": float(penalized_score),
             "adapter_params": int(adapter_params),
+            "zico_loss": float(zico_loss),
+            "elapsed_seconds": elapsed_seconds,
+            "peak_memory_mb": peak_memory_mb,
+            "zico_batches": zico_batches,
+            **macs_info,
         }
 
     def compute_identity_baseline(self):
@@ -372,6 +445,16 @@ class OperationConditionedHierarchicalSearchController:
             "zico_score": score_info["zico_score"],
             "penalized_score": score_info["penalized_score"],
             "adapter_params": score_info["adapter_params"],
+            "elapsed_seconds": score_info.get("elapsed_seconds"),
+            "peak_memory_mb": score_info.get("peak_memory_mb"),
+            "zico_batches": score_info.get("zico_batches"),
+            "adapter_macs_per_layer": score_info.get("adapter_macs_per_layer"),
+            "adapter_actual_macs": score_info.get("adapter_actual_macs"),
+            "adapter_actual_gmacs": score_info.get("adapter_actual_gmacs"),
+            "adapter_effective_macs": score_info.get("adapter_effective_macs"),
+            "adapter_effective_gmacs": score_info.get("adapter_effective_gmacs"),
+            "adapter_active_layers": score_info.get("adapter_active_layers"),
+            "adapter_effective_layers": score_info.get("adapter_effective_layers"),
         }
         if self.local_rank == 0:
             self.log(
@@ -423,6 +506,7 @@ class OperationConditionedHierarchicalSearchController:
         return f"op={decoded['operation']}, config={decoded['config']}"
 
     def run_search(self):
+        self.search_start_time = time.time()
         self.compute_identity_baseline()
         for iteration in range(self.N):
             perturbations = []
@@ -451,7 +535,10 @@ class OperationConditionedHierarchicalSearchController:
                     parts.append(
                         f"{self._format_decoded(decoded)} gamma={gamma} "
                         f"ZiCo={info['zico_score']:.4f} score={info['penalized_score']:.4f} "
-                        f"params={info['adapter_params']}"
+                        f"params={info['adapter_params']} "
+                        f"gmacs={info['adapter_actual_gmacs']:.3f} "
+                        f"time={info['elapsed_seconds']:.1f}s "
+                        f"mem={info['peak_memory_mb']:.0f}MB"
                     )
                 self.log(
                     f"[op-cond-search {iteration + 1}/{self.N}] "
@@ -510,6 +597,18 @@ class OperationConditionedHierarchicalSearchController:
             "final_decoded": final_result,
             "search_space": self.search_space,
             "identity_baseline": self.identity_baseline,
+            "efficiency": {
+                "total_search_seconds": time.time() - self.search_start_time if self.search_start_time is not None else None,
+                "estimated_gpu_hours": (
+                    (time.time() - self.search_start_time) * dist.get_world_size() / 3600
+                    if self.search_start_time is not None
+                    else None
+                ),
+                "candidate_evaluations": self.total_candidate_evals,
+                "zico_forward_backward_batches": self.total_zico_batches,
+                "candidate_eval_seconds_sum": self.total_candidate_seconds,
+                "max_peak_memory_mb": self.max_peak_memory_mb,
+            },
             "hyperparameters": {
                 "strategy": self.search_strategy,
                 "K": self.K,

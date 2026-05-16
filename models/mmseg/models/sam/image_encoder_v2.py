@@ -251,7 +251,10 @@ class ResidualAdapterLayer(nn.Module):
         self.gamma.fill_(float(gamma))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x + self.gamma.to(dtype=x.dtype, device=x.device) * self.adapter(x)
+        gamma = self.gamma.to(dtype=x.dtype, device=x.device)
+        if float(self.gamma.item()) == 0.0:
+            return x
+        return x + gamma * self.adapter(x)
 
 
 class ImageEncoderViTV2(nn.Module):
