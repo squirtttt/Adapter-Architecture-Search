@@ -361,7 +361,7 @@ def main(config_, save_path, parsed_args):
         log("Operation-Conditioned Hierarchical ZAAS Search Completed")
         log(f"Final operation: {result['operation']}")
         log(f"Final config: {result['config']}")
-        log(f"ZiCo: {result['zico_score']:.4f}, penalized score: {result['penalized_score']:.4f}")
+        log(f"{result['proxy']}: {result['proxy_score']:.4f}, penalized score: {result['penalized_score']:.4f}")
         if "final_decoded" in result:
             final_decoded = result["final_decoded"]
             log(
@@ -369,8 +369,8 @@ def main(config_, save_path, parsed_args):
                 f"{final_decoded['operation']}, config: {final_decoded['config']}"
             )
             log(
-                "Alpha/logit decoded ZiCo: "
-                f"{final_decoded['zico_score']:.4f}, "
+                f"Alpha/logit decoded {final_decoded['proxy']}: "
+                f"{final_decoded['proxy_score']:.4f}, "
                 f"penalized score: {final_decoded['penalized_score']:.4f}"
             )
         log("=" * 60)

@@ -181,6 +181,64 @@ def compute_adapter_zico(model, train_loader, device, local_rank, max_batches=No
     return loss_sum / loss_count if loss_count else 0.0, zico_score, score_dict
 
 
+def compute_adapter_naswot(model, train_loader, device, local_rank, max_batches=None, max_patterns=64):
+    """Adapter-only NASWOT proxy for v2 repeated adapters.
+
+    Hooks collect binarized activation patterns from Linear/Conv2d modules
+    inside `extended_adapters`, then compute the NASWOT log determinant.
+    """
+    patterns = []
+
+    def hook_fn(_module, _inp, out):
+        if isinstance(out, tuple):
+            out = out[0]
+        out_flat = out.detach().view(out.shape[0], -1)
+        patterns.append((out_flat > 0).float().cpu())
+
+    hooks = []
+    for name, module in model.named_modules():
+        if "extended_adapters" in name and isinstance(module, (nn.Linear, nn.Conv2d)):
+            hooks.append(module.register_forward_hook(hook_fn))
+
+    model.train()
+    loss_sum = 0.0
+    loss_count = 0
+    total_batches = len(train_loader) if max_batches is None else min(len(train_loader), max_batches)
+    pbar = tqdm(total=total_batches, leave=False, desc="naswot") if local_rank == 0 else None
+    for i, batch in enumerate(train_loader):
+        if max_batches is not None and i >= max_batches:
+            break
+        for k, v in batch.items():
+            batch[k] = v.to(device)
+        model.zero_grad()
+        model.set_input(batch["inp"], batch["gt"])
+        model.search_backward()
+        gathered_loss = [torch.zeros_like(model.loss_G.detach()) for _ in range(dist.get_world_size())]
+        dist.all_gather(gathered_loss, model.loss_G.detach())
+        loss_sum += sum(loss.item() for loss in gathered_loss)
+        loss_count += len(gathered_loss)
+        if pbar is not None:
+            pbar.update(1)
+
+    for hook in hooks:
+        hook.remove()
+    if pbar is not None:
+        pbar.close()
+
+    if len(patterns) == 0:
+        return loss_sum / loss_count if loss_count else 0.0, -1000.0, {}
+
+    all_patterns = torch.cat(patterns, dim=0)
+    if all_patterns.shape[0] > max_patterns:
+        indices = torch.randperm(all_patterns.shape[0])[:max_patterns]
+        all_patterns = all_patterns[indices]
+
+    x = all_patterns.float()
+    k_matrix = (x @ x.t()) + ((1.0 - x) @ (1.0 - x.t()))
+    _, logdet = np.linalg.slogdet(k_matrix.numpy())
+    return loss_sum / loss_count if loss_count else 0.0, float(logdet), {}
+
+
 class OperationConditionedHierarchicalSearchController:
     """Operation-conditioned hierarchical perturbation search.
 
@@ -199,6 +257,9 @@ class OperationConditionedHierarchicalSearchController:
 
         search_cfg = config["search"]
         self.search_strategy = search_cfg.get("search_strategy", "hierarchical_perturbation")
+        self.search_proxy = search_cfg.get("search_proxy", "zico").lower()
+        if self.search_proxy not in {"zico", "naswot"}:
+            raise ValueError(f"Unsupported search_proxy: {self.search_proxy}")
         self.search_mode = search_cfg.get("search_mode", "continuous_residual")
         if self.search_mode == "continuous":
             self.search_mode = "continuous_residual"
@@ -225,7 +286,8 @@ class OperationConditionedHierarchicalSearchController:
             raise ValueError("operation search space is empty after removing identity baseline")
         self.K = search_cfg.get("K", search_cfg.get("perturbation_number", search_cfg.get("sample_size", 5)))
         self.N = search_cfg.get("N", search_cfg.get("iterations", search_cfg.get("iteration", 20)))
-        self.max_zico_batches = search_cfg.get("max_zico_batches")
+        self.max_proxy_batches = search_cfg.get("max_proxy_batches", search_cfg.get("max_zico_batches"))
+        self.max_zico_batches = self.max_proxy_batches
         self.sigma_op = search_cfg.get("sigma_op", 0.1)
         self.sigma_config = search_cfg.get("sigma_config", 0.1)
         self.sigma_layer = search_cfg.get("sigma_layer", 0.1)
@@ -247,7 +309,9 @@ class OperationConditionedHierarchicalSearchController:
         self.alpha_layer = torch.tensor(search_cfg.get("alpha_layer", [0.0] * 12), dtype=torch.float32, device=device)
 
         self.best_score = float("-inf")
-        self.best_zico_score = 0.0
+        self.best_proxy_score = 0.0
+        self.best_zico_score = None
+        self.best_naswot_score = None
         self.best_decoded = None
         self.best_adapter_params = 0
         self.search_start_time = None
@@ -383,19 +447,28 @@ class OperationConditionedHierarchicalSearchController:
         ).module
         model = self.load_checkpoint_and_freeze(model)
 
-        zico_loss, zico_score, _ = compute_adapter_zico(
-            model,
-            self.train_loader,
-            self.device,
-            self.local_rank,
-            max_batches=self.max_zico_batches,
-        )
+        if self.search_proxy == "naswot":
+            proxy_loss, proxy_score, _ = compute_adapter_naswot(
+                model,
+                self.train_loader,
+                self.device,
+                self.local_rank,
+                max_batches=self.max_proxy_batches,
+            )
+        else:
+            proxy_loss, proxy_score, _ = compute_adapter_zico(
+                model,
+                self.train_loader,
+                self.device,
+                self.local_rank,
+                max_batches=self.max_proxy_batches,
+            )
         adapter_params = count_adapter_params(model)
         gamma_or_mask = decoded["gamma"] if self.search_mode != "hard_insertion" else decoded["mask"]
         if gamma_or_mask is None:
             gamma_or_mask = decoded["gamma"]
         penalized_score = (
-            float(zico_score)
+            float(proxy_score)
             - self.lambda_gamma * float(gamma_or_mask.sum().item())
             - self.lambda_param * adapter_params
         )
@@ -409,22 +482,26 @@ class OperationConditionedHierarchicalSearchController:
             image_size=self.config["model"]["args"]["inp_size"],
             patch_size=self.config["model"]["args"]["encoder_mode"]["patch_size"],
         )
-        zico_batches = len(self.train_loader) if self.max_zico_batches is None else min(len(self.train_loader), self.max_zico_batches)
+        proxy_batches = len(self.train_loader) if self.max_proxy_batches is None else min(len(self.train_loader), self.max_proxy_batches)
         self.total_candidate_evals += 1
-        self.total_zico_batches += zico_batches
+        self.total_zico_batches += proxy_batches
         self.total_candidate_seconds += elapsed_seconds
         self.max_peak_memory_mb = max(self.max_peak_memory_mb, peak_memory_mb)
         del model
         gc.collect()
         torch.cuda.empty_cache()
         return {
-            "zico_score": float(zico_score),
+            "proxy": self.search_proxy,
+            "proxy_score": float(proxy_score),
+            "zico_score": float(proxy_score) if self.search_proxy == "zico" else None,
+            "naswot_score": float(proxy_score) if self.search_proxy == "naswot" else None,
             "penalized_score": float(penalized_score),
             "adapter_params": int(adapter_params),
-            "zico_loss": float(zico_loss),
+            "proxy_loss": float(proxy_loss),
             "elapsed_seconds": elapsed_seconds,
             "peak_memory_mb": peak_memory_mb,
-            "zico_batches": zico_batches,
+            "proxy_batches": proxy_batches,
+            "zico_batches": proxy_batches,
             **macs_info,
         }
 
@@ -442,7 +519,10 @@ class OperationConditionedHierarchicalSearchController:
             "operation": "identity",
             "config": {},
             "gamma": [0.0 for _ in range(len(self.alpha_layer))],
+            "proxy": score_info["proxy"],
+            "proxy_score": score_info["proxy_score"],
             "zico_score": score_info["zico_score"],
+            "naswot_score": score_info["naswot_score"],
             "penalized_score": score_info["penalized_score"],
             "adapter_params": score_info["adapter_params"],
             "elapsed_seconds": score_info.get("elapsed_seconds"),
@@ -459,7 +539,7 @@ class OperationConditionedHierarchicalSearchController:
         if self.local_rank == 0:
             self.log(
                 "[identity-baseline] "
-                f"ZiCo={score_info['zico_score']:.4f} "
+                f"{self.search_proxy}={score_info['proxy_score']:.4f} "
                 f"score={score_info['penalized_score']:.4f} "
                 f"params={score_info['adapter_params']}"
             )
@@ -493,7 +573,9 @@ class OperationConditionedHierarchicalSearchController:
     def _update_best(self, decoded, score_info):
         if score_info["penalized_score"] > self.best_score:
             self.best_score = score_info["penalized_score"]
+            self.best_proxy_score = score_info["proxy_score"]
             self.best_zico_score = score_info["zico_score"]
+            self.best_naswot_score = score_info["naswot_score"]
             self.best_decoded = {
                 "operation": decoded["operation"],
                 "config": copy.deepcopy(decoded["config"]),
@@ -534,7 +616,7 @@ class OperationConditionedHierarchicalSearchController:
                     gamma = [round(float(v), 4) for v in decoded["gamma"].detach().cpu().tolist()]
                     parts.append(
                         f"{self._format_decoded(decoded)} gamma={gamma} "
-                        f"ZiCo={info['zico_score']:.4f} score={info['penalized_score']:.4f} "
+                        f"{self.search_proxy}={info['proxy_score']:.4f} score={info['penalized_score']:.4f} "
                         f"params={info['adapter_params']} "
                         f"gmacs={info['adapter_actual_gmacs']:.3f} "
                         f"time={info['elapsed_seconds']:.1f}s "
@@ -562,7 +644,10 @@ class OperationConditionedHierarchicalSearchController:
             "gamma": [float(v) for v in gamma.tolist()],
             "binary_mask": None if mask is None else [int(v) for v in mask.tolist()],
             "search_mode": self.search_mode,
+            "proxy": score_info["proxy"],
+            "proxy_score": score_info["proxy_score"],
             "zico_score": score_info["zico_score"],
+            "naswot_score": score_info["naswot_score"],
             "penalized_score": score_info["penalized_score"],
             "adapter_params": score_info["adapter_params"],
         }
@@ -582,7 +667,10 @@ class OperationConditionedHierarchicalSearchController:
                 "mask": self.best_decoded["mask"],
             }
             best_score = {
+                "proxy": self.search_proxy,
+                "proxy_score": self.best_proxy_score,
                 "zico_score": self.best_zico_score,
+                "naswot_score": self.best_naswot_score,
                 "penalized_score": self.best_score,
                 "adapter_params": self.best_adapter_params,
             }
@@ -605,12 +693,15 @@ class OperationConditionedHierarchicalSearchController:
                     else None
                 ),
                 "candidate_evaluations": self.total_candidate_evals,
+                "proxy_forward_backward_batches": self.total_zico_batches,
                 "zico_forward_backward_batches": self.total_zico_batches,
                 "candidate_eval_seconds_sum": self.total_candidate_seconds,
                 "max_peak_memory_mb": self.max_peak_memory_mb,
             },
             "hyperparameters": {
                 "strategy": self.search_strategy,
+                "search_proxy": self.search_proxy,
+                "max_proxy_batches": self.max_proxy_batches,
                 "K": self.K,
                 "N": self.N,
                 "sigma_op": self.sigma_op,

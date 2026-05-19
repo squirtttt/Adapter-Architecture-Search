@@ -42,7 +42,7 @@ test_dataset:
   batch_size: 1
 
 eval_type: polyp
-sam_checkpoint: ./pretrained/sam_vit_b_01ec64.pth
+sam_checkpoint: ./pretrained/medsam_vit_b.pth
 data_norm:
   inp:
     sub: [0.5]
@@ -92,9 +92,11 @@ epoch_save: 1
 
 search:
   search_strategy: hierarchical_perturbation  # options: original_zaas, random_candidate, hierarchical_perturbation
+  search_proxy: zico # options: zico, naswot
   search_mode: continuous_residual # options: continuous_residual, hard_insertion
   N: 20
   K: 5
+  max_proxy_batches: 500
   max_zico_batches: 500
   sigma_op: 0.1
   sigma_config: 0.1
