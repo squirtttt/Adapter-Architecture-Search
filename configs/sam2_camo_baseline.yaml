@@ -1,0 +1,62 @@
+train_dataset:
+  dataset:
+    name: paired-image-folders
+    args:
+      root_path_1: ./load/CAMO/Images/Train
+      root_path_2: ./load/CAMO/GT
+      cache: none
+      split_key: train
+  wrapper:
+    name: train
+    args:
+      inp_size: 1024
+      augment: false
+  batch_size: 1
+
+val_dataset:
+  dataset:
+    name: paired-image-folders
+    args:
+      root_path_1: ./load/CAMO/Images/Test
+      root_path_2: ./load/CAMO/GT
+      cache: none
+      split_key: test
+  wrapper:
+    name: val
+    args:
+      inp_size: 1024
+  batch_size: 1
+
+eval_type: cod
+sam_checkpoint:
+data_norm:
+  inp:
+    sub: [0.5]
+    div: [0.5]
+  gt:
+    sub: [0.5]
+    div: [0.5]
+
+model:
+  name: sam2_baseline
+  args:
+    inp_size: 1024
+    loss: iou
+    sam2:
+      config: configs/sam2.1/sam2.1_hiera_b+.yaml
+      checkpoint: ./pretrained/sam2.1_hiera_base_plus.pt
+      image_size: 1024
+      patch_size: 16
+      feature_dim: 256
+      prompt_embed_dim: 256
+      adapter_depth: 12
+      adapter_insertion: auto
+
+optimizer:
+  name: adamw
+  args:
+    lr: 0.0002
+lr_min: 1.0e-7
+epoch_max: 20
+epoch_val: 1
+epoch_save: 1

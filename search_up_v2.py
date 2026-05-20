@@ -18,6 +18,7 @@ from tqdm import tqdm
 import datasets
 import models
 import models.sam_v2  # registers sam_v2 without modifying the original model registry file
+import models.sam2_external  # registers optional SAM2 models
 import utils
 from models.mmseg.models.sam.image_encoder_v2 import count_adapter_params
 from search.operation_conditioned_hierarchical_search import OperationConditionedHierarchicalSearchController
@@ -202,8 +203,9 @@ def prepare_training(candidate: AdapterCandidate, gamma: torch.Tensor, base_conf
 
 
 def load_checkpoint_and_freeze(model):
-    sam_checkpoint = torch.load(config["sam_checkpoint"], map_location="cpu")
-    model.load_state_dict(sam_checkpoint, strict=False)
+    if config.get("sam_checkpoint"):
+        sam_checkpoint = torch.load(config["sam_checkpoint"], map_location="cpu")
+        model.load_state_dict(sam_checkpoint, strict=False)
     freeze_sam_backbone_enable_adapter_training(model)
     return model
 

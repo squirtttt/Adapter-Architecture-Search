@@ -15,6 +15,7 @@ from tqdm import tqdm
 
 import models
 import models.repeated_adapter_sam
+import models.sam2_external
 import utils
 from models.mmseg.models.sam.image_encoder_v2 import count_adapter_params
 
@@ -103,6 +104,31 @@ def freeze_sam_backbone_enable_adapter_training(model: nn.Module) -> None:
             param.requires_grad_(True)
 
 
+def set_adapter_config(model_spec: Dict, adapter_kwargs: Dict) -> None:
+    args = model_spec.setdefault("args", {})
+    if "encoder_mode" in args:
+        args["encoder_mode"]["extended_adapter"] = adapter_kwargs
+    else:
+        args["adapter"] = adapter_kwargs
+
+
+def get_adapter_efficiency_shape(config: Dict):
+    args = config["model"]["args"]
+    if "encoder_mode" in args:
+        encoder_mode = args["encoder_mode"]
+        return (
+            encoder_mode.get("embed_dim", 768),
+            args.get("inp_size", encoder_mode.get("img_size", 1024)),
+            encoder_mode.get("patch_size", 16),
+        )
+    sam2_cfg = args.get("sam2", {})
+    return (
+        sam2_cfg.get("feature_dim", sam2_cfg.get("hidden_dim", 256)),
+        args.get("inp_size", sam2_cfg.get("image_size", 1024)),
+        sam2_cfg.get("patch_size", 16),
+    )
+
+
 def update_zico_stats(model: nn.Module, stats: dict):
     for name, mod in model.named_modules():
         if "extended_adapters" not in name:
@@ -181,7 +207,15 @@ def compute_adapter_zico(model, train_loader, device, local_rank, max_batches=No
     return loss_sum / loss_count if loss_count else 0.0, zico_score, score_dict
 
 
-def compute_adapter_naswot(model, train_loader, device, local_rank, max_batches=None, max_patterns=64):
+def compute_adapter_naswot(
+    model,
+    train_loader,
+    device,
+    local_rank,
+    max_batches=None,
+    max_patterns=64,
+    max_features=8192,
+):
     """Adapter-only NASWOT proxy for v2 repeated adapters.
 
     Hooks collect binarized activation patterns from Linear/Conv2d modules
@@ -190,48 +224,63 @@ def compute_adapter_naswot(model, train_loader, device, local_rank, max_batches=
     patterns = []
 
     def hook_fn(_module, _inp, out):
+        if len(patterns) >= max_patterns:
+            return
         if isinstance(out, tuple):
             out = out[0]
-        out_flat = out.detach().view(out.shape[0], -1)
-        patterns.append((out_flat > 0).float().cpu())
+        out_flat = out.detach().reshape(out.shape[0], -1)
+        if out_flat.shape[1] > max_features:
+            stride = max(1, out_flat.shape[1] // max_features)
+            out_flat = out_flat[:, ::stride][:, :max_features]
+        elif out_flat.shape[1] < max_features:
+            pad = max_features - out_flat.shape[1]
+            out_flat = torch.nn.functional.pad(out_flat, (0, pad))
+        binary = (out_flat > 0).float().cpu()
+        remaining = max_patterns - len(patterns)
+        patterns.extend(binary[:remaining].unbind(0))
 
     hooks = []
     for name, module in model.named_modules():
         if "extended_adapters" in name and isinstance(module, (nn.Linear, nn.Conv2d)):
             hooks.append(module.register_forward_hook(hook_fn))
 
+    if len(hooks) == 0:
+        return 0.0, 0.0, {}
+
     model.train()
     loss_sum = 0.0
     loss_count = 0
     total_batches = len(train_loader) if max_batches is None else min(len(train_loader), max_batches)
     pbar = tqdm(total=total_batches, leave=False, desc="naswot") if local_rank == 0 else None
-    for i, batch in enumerate(train_loader):
-        if max_batches is not None and i >= max_batches:
-            break
-        for k, v in batch.items():
-            batch[k] = v.to(device)
-        model.zero_grad()
-        model.set_input(batch["inp"], batch["gt"])
-        model.search_backward()
-        gathered_loss = [torch.zeros_like(model.loss_G.detach()) for _ in range(dist.get_world_size())]
-        dist.all_gather(gathered_loss, model.loss_G.detach())
-        loss_sum += sum(loss.item() for loss in gathered_loss)
-        loss_count += len(gathered_loss)
+    try:
+        with torch.inference_mode():
+            for i, batch in enumerate(train_loader):
+                if max_batches is not None and i >= max_batches:
+                    break
+                if len(patterns) >= max_patterns:
+                    break
+                for k, v in batch.items():
+                    batch[k] = v.to(device)
+                model.set_input(batch["inp"], batch["gt"])
+                model.forward()
+                if hasattr(model, "criterionBCE") and hasattr(model, "pred_mask"):
+                    loss = model.criterionBCE(model.pred_mask, model.gt_mask)
+                    gathered_loss = [torch.zeros_like(loss.detach()) for _ in range(dist.get_world_size())]
+                    dist.all_gather(gathered_loss, loss.detach())
+                    loss_sum += sum(item.item() for item in gathered_loss)
+                    loss_count += len(gathered_loss)
+                if pbar is not None:
+                    pbar.update(1)
+    finally:
+        for hook in hooks:
+            hook.remove()
         if pbar is not None:
-            pbar.update(1)
-
-    for hook in hooks:
-        hook.remove()
-    if pbar is not None:
-        pbar.close()
+            pbar.close()
 
     if len(patterns) == 0:
         return loss_sum / loss_count if loss_count else 0.0, -1000.0, {}
 
-    all_patterns = torch.cat(patterns, dim=0)
-    if all_patterns.shape[0] > max_patterns:
-        indices = torch.randperm(all_patterns.shape[0])[:max_patterns]
-        all_patterns = all_patterns[indices]
+    all_patterns = torch.stack(patterns, dim=0)
 
     x = all_patterns.float()
     k_matrix = (x @ x.t()) + ((1.0 - x) @ (1.0 - x.t()))
@@ -419,8 +468,8 @@ class OperationConditionedHierarchicalSearchController:
 
     def build_candidate_model(self, decoded):
         cfg = copy.deepcopy(self.config)
-        cfg["model"]["name"] = "repeated_adapter_sam"
-        cfg["model"]["args"]["encoder_mode"]["extended_adapter"] = self._adapter_kwargs(decoded)
+        cfg["model"]["name"] = cfg["model"].get("search_model_name", cfg["model"]["name"])
+        set_adapter_config(cfg["model"], self._adapter_kwargs(decoded))
         model = models.make(cfg["model"]).cuda()
         optimizer = utils.make_optimizer(model.parameters(), cfg["optimizer"])
         lr_scheduler = CosineAnnealingLR(optimizer, cfg.get("epoch_max"), eta_min=cfg.get("lr_min"))
@@ -428,8 +477,9 @@ class OperationConditionedHierarchicalSearchController:
         return model, optimizer, lr_scheduler, cfg
 
     def load_checkpoint_and_freeze(self, model):
-        checkpoint = torch.load(self.config["sam_checkpoint"], map_location="cpu")
-        model.load_state_dict(checkpoint, strict=False)
+        if self.config.get("sam_checkpoint"):
+            checkpoint = torch.load(self.config["sam_checkpoint"], map_location="cpu")
+            model.load_state_dict(checkpoint, strict=False)
         freeze_sam_backbone_enable_adapter_training(model)
         return model
 
@@ -476,12 +526,8 @@ class OperationConditionedHierarchicalSearchController:
         peak_memory_mb = 0.0
         if torch.cuda.is_available():
             peak_memory_mb = torch.cuda.max_memory_allocated(self.device) / (1024 ** 2)
-        macs_info = estimate_adapter_macs(
-            decoded,
-            embed_dim=self.config["model"]["args"]["encoder_mode"]["embed_dim"],
-            image_size=self.config["model"]["args"]["inp_size"],
-            patch_size=self.config["model"]["args"]["encoder_mode"]["patch_size"],
-        )
+        embed_dim, image_size, patch_size = get_adapter_efficiency_shape(self.config)
+        macs_info = estimate_adapter_macs(decoded, embed_dim=embed_dim, image_size=image_size, patch_size=patch_size)
         proxy_batches = len(self.train_loader) if self.max_proxy_batches is None else min(len(self.train_loader), self.max_proxy_batches)
         self.total_candidate_evals += 1
         self.total_zico_batches += proxy_batches
@@ -719,9 +765,7 @@ class OperationConditionedHierarchicalSearchController:
         os.makedirs(save_path, exist_ok=True)
         json_path = os.path.join(save_path, "searched_operation_conditioned_zaas_config.json")
         _, _, _, best_cfg = self.build_candidate_model(best_decoded)
-        best_cfg["model"]["name"] = "repeated_adapter_sam"
         _, _, _, final_cfg = self.build_candidate_model(final_decoded)
-        final_cfg["model"]["name"] = "repeated_adapter_sam"
         yaml_path = os.path.join(save_path, "best_arch_hierarchical_v2.yaml")
         best_yaml_path = os.path.join(save_path, "best_sampled_arch_hierarchical_v2.yaml")
         final_yaml_path = os.path.join(save_path, "final_decoded_arch_hierarchical_v2.yaml")

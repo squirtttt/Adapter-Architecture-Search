@@ -7,6 +7,13 @@ pretrained/
 # experimental result ignore
 save/
 
+
+# experimental result ignore
+scripts/
+# external official repos used by setup scripts
+third_party/sam2/
+third_party/SAM2-Adapter-PyTorch/
+
 # pyc files ignore
 *.pyc
 __pycache__/

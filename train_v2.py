@@ -14,6 +14,7 @@ from statistics import mean
 import datasets
 import models
 import models.repeated_adapter_sam  # registers repeated_adapter_sam
+import models.sam2_external  # registers optional SAM2 models
 import utils
 
 
@@ -128,8 +129,9 @@ def main(config_, save_path, args):
         broadcast_buffers=False,
     ).module
 
-    sam_checkpoint = torch.load(config["sam_checkpoint"], map_location="cpu")
-    model.load_state_dict(sam_checkpoint, strict=False)
+    if config.get("sam_checkpoint"):
+        sam_checkpoint = torch.load(config["sam_checkpoint"], map_location="cpu")
+        model.load_state_dict(sam_checkpoint, strict=False)
     freeze_sam_backbone_enable_adapter_training(model)
 
     if local_rank == 0:

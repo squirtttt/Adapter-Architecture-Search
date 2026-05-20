@@ -28,7 +28,7 @@ val_dataset:
   batch_size: 1
 
 eval_type: cod
-sam_checkpoint: ./pretrained/sam_vit_b_01ec64.pth
+sam_checkpoint:
 data_norm:
   inp:
     sub: [0.5]
@@ -36,36 +36,33 @@ data_norm:
   gt:
     sub: [0.5]
     div: [0.5]
+
 model:
-  name: repeated_adapter_sam
+  name: sam2_adapter
+  search_model_name: sam2_adapter_search
   args:
     inp_size: 1024
     loss: iou
-    encoder_mode:
-      name: sam_v2
-      img_size: 1024
-      mlp_ratio: 4
+    sam2:
+      config: configs/sam2.1/sam2.1_hiera_b+.yaml
+      checkpoint: ./pretrained/sam2.1_hiera_base_plus.pt
+      image_size: 1024
       patch_size: 16
-      qkv_bias: true
-      use_rel_pos: true
-      window_size: 14
-      out_chans: 256
+      feature_dim: 256
       prompt_embed_dim: 256
-      embed_dim: 768
-      depth: 12
-      num_heads: 12
-      global_attn_indexes: [2, 5, 8, 11]
-      extended_adapter:
-        primitive_type: identity
-        dim:
-        activation:
-        gate:
-        rank:
-        freq_mode:
-        attention_type:
-        edge_mode:
-        search_mode: continuous
-        gamma: [0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]
+      adapter_depth: 12
+      adapter_insertion: auto
+    adapter:
+      primitive_type: identity
+      dim:
+      activation:
+      gate:
+      rank:
+      freq_mode:
+      attention_type:
+      edge_mode:
+      search_mode: continuous_residual
+      gamma: [0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]
 
 optimizer:
   name: adamw
@@ -77,19 +74,19 @@ epoch_val: 1
 epoch_save: 1
 
 search:
-  search_strategy: hierarchical_perturbation  # options: original_zaas, random_candidate, hierarchical_perturbation
-  search_proxy: naswot # options: zico, naswot
-  search_mode: continuous_residual # options: continuous_residual, hard_insertion
+  search_strategy: hierarchical_perturbation
+  search_proxy: zico
+  search_mode: continuous_residual
   N: 20
   K: 5
-  max_proxy_batches: 500
-  max_zico_batches: 500
+  max_proxy_batches: 100
+  max_zico_batches: 100
   sigma_op: 0.1
   sigma_config: 0.1
   sigma_layer: 0.5
   eta_op: 1.0
   eta_config: 1.0
-  eta_layer: 2.0 #2.0
+  eta_layer: 2.0
   tau: 0.5
   lambda_gamma: 0.01
   lambda_param: 0.0
@@ -118,4 +115,3 @@ search:
       dim: [16, 32, 64]
       activation: [gelu, silu]
       edge_mode: [sobel, laplacian, dw_gradient]
-  alpha_layer: [0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]

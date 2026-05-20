@@ -8,6 +8,7 @@ from tqdm import tqdm
 import datasets
 import models
 import models.repeated_adapter_sam  # registers repeated_adapter_sam
+import models.sam2_external  # registers optional SAM2 models
 import utils
 
 
