@@ -2,8 +2,8 @@ train_dataset:
   dataset:
     name: paired-image-folders
     args:
-      root_path_1: ../../load/CAMO/Images/Train
-      root_path_2: ../../load/CAMO/GT
+      root_path_1: ../../load/Kvasir-SEG/images
+      root_path_2: ../../load/Kvasir-SEG/masks
       cache: none
       split_key: train
   wrapper:
@@ -12,13 +12,12 @@ train_dataset:
       inp_size: 1024
       augment: false
   batch_size: 1
-
 val_dataset:
   dataset:
     name: paired-image-folders
     args:
-      root_path_1: ../../load/CAMO/Images/Test
-      root_path_2: ../../load/CAMO/GT
+      root_path_1: ../../load/Kvasir-SEG-test/images
+      root_path_2: ../../load/Kvasir-SEG-test/masks
       cache: none
       split_key: test
   wrapper:
@@ -26,13 +25,12 @@ val_dataset:
     args:
       inp_size: 1024
   batch_size: 1
-
 test_dataset:
   dataset:
     name: paired-image-folders
     args:
-      root_path_1: ../../load/CAMO/Images/Test
-      root_path_2: ../../load/CAMO/GT
+      root_path_1: ../../load/Kvasir-SEG-test/images
+      root_path_2: ../../load/Kvasir-SEG-test/masks
       cache: none
       split_key: test
   wrapper:
@@ -40,20 +38,24 @@ test_dataset:
     args:
       inp_size: 1024
   batch_size: 1
-
-eval_type: cod
+eval_type: kvasir
 sam_checkpoint: ../../pretrained/sam2_hiera_base_plus.pt
 data_norm:
   inp:
-    sub: [0.5]
-    div: [0.5]
+    sub:
+    - 0.5
+    div:
+    - 0.5
   gt:
-    sub: [0.5]
-    div: [0.5]
+    sub:
+    - 0.5
+    div:
+    - 0.5
   gt_rgb:
-    sub: [0.5]
-    div: [0.5]
-
+    sub:
+    - 0.5
+    div:
+    - 0.5
 model:
   name: sam
   args:
@@ -61,18 +63,41 @@ model:
     loss: iou
     encoder_mode:
       name: sam
-      stages: [2, 3, 16, 3]
-      global_att_blocks: [12, 16, 20]
-      window_pos_embed_bkg_spatial_size: [14, 14]
-      window_spec: [8, 4, 14, 7]
+      stages:
+      - 2
+      - 3
+      - 16
+      - 3
+      global_att_blocks:
+      - 12
+      - 16
+      - 20
+      window_pos_embed_bkg_spatial_size:
+      - 14
+      - 14
+      window_spec:
+      - 8
+      - 4
+      - 14
+      - 7
       num_pos_feats: 256
       normalize: true
-      scale:
+      scale: null
       temperature: 10000
       d_model: 256
-      backbone_channel_list: [896, 448, 224, 112]
-      embed_dims: [112, 224, 448, 896]
-      fpn_top_down_levels: [2, 3]
+      backbone_channel_list:
+      - 896
+      - 448
+      - 224
+      - 112
+      embed_dims:
+      - 112
+      - 224
+      - 448
+      - 896
+      fpn_top_down_levels:
+      - 2
+      - 3
       fpn_interp_model: nearest
       img_size: 1024
       mlp_ratio: 4
@@ -93,13 +118,15 @@ model:
       embed_dim: 112
       depth: 24
       num_heads: 2
-      global_attn_indexes: [12, 16, 20]
-
+      global_attn_indexes:
+      - 12
+      - 16
+      - 20
 optimizer:
   name: adamw
   args:
     lr: 0.0002
-lr_min: 1.0e-7
-epoch_max: 20
+lr_min: 1.0e-07
+epoch_max: 120
 epoch_val: 1
 epoch_save: 1

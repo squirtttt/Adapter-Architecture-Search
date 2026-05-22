@@ -6,6 +6,7 @@ train_dataset:
       root_path_2: ../../load/CAMO/GT
       cache: none
       split_key: train
+      first_k: 1
   wrapper:
     name: train
     args:
@@ -21,6 +22,7 @@ val_dataset:
       root_path_2: ../../load/CAMO/GT
       cache: none
       split_key: test
+      first_k: 1
   wrapper:
     name: val
     args:
@@ -35,6 +37,7 @@ test_dataset:
       root_path_2: ../../load/CAMO/GT
       cache: none
       split_key: test
+      first_k: 1
   wrapper:
     name: val
     args:
@@ -100,6 +103,6 @@ optimizer:
   args:
     lr: 0.0002
 lr_min: 1.0e-7
-epoch_max: 20
+epoch_max: 1
 epoch_val: 1
 epoch_save: 1

@@ -57,8 +57,8 @@ model:
       global_attn_indexes: [2, 5, 8, 11]
       extended_adapter:
         primitive_type: identity
-        dim:
-        activation:
+        dim: 
+        activation: 
         gate:
         rank:
         freq_mode:
