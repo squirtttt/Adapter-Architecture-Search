@@ -1,70 +1,212 @@
-## SAM-Adapter Architecture Search
+# ZAMs: Zero-shot Adapter Architecture Search for Segmentation Foundation Models
 
-- 🦑5/27 
-  - create repo ✅
-  - create conda env ✅
-  - write search.py ✅
-  - search configs are set in search_demo.yaml ✅ 
+ZAMs is a zero-shot adapter architecture search pipeline for segmentation foundation models such as SAM and SAM2. It searches lightweight residual adapter architectures without fully training every candidate, then fine-tunes only the selected adapter while keeping the foundation backbone frozen.
 
-- 🐔5/28
-  - search.py > random architecture generation() ✅
-  - search.py > prepare_training() 
-  - search.py > compute_nas_score() 🔃 -> additional editing 
-  - ./model/sam.py > Class Image encoder setting
-  - ./model/mmseg/models/sam/image_encoder.py > Class Prompt generator setting
+The current implementation supports operation-conditioned hierarchical perturbation search over:
 
+- Adapter primitive type
+- Operation-specific adapter configuration
+- Layer-wise residual importance values
+- Continuous residual or hard insertion modes
+- ZiCo and NASWOT-style zero-shot proxy evaluation
 
-- 🐠6/2
-  - search.py > random search architecture 에 대한 score list를 구축하는 방식으로 변경 ✅
-  - search.py > prepare_training()
-  - search.py > compute_nas_score()
-  - ./model/sam.py > Class Image encoder setting
-  - ./model/mmseg/models/sam/image_encoder.py > Class Prompt generator setting
+The final searched model follows a single-adapter philosophy:
 
-- 🍥6/4
-  - search.py > prepare_training() ✅
-    - model의 search_config 가 설정된 대로 전달되도록 설정
-  - search.py > inference를 compute_zico.py 에서 할 수 있도록 코드 수정 ✅
-    - ./model/sam.py > Class SAM > search_backward() 추가: gradient만 역전파하고 모델의 update는 하지 않도록 설정
-  - ./model/sam.py > Class Image encoder setting ✅
-  - ./model/mmseg/models/sam/image_encoder.py > Class Prompt generator setting ✅
-  - search.py > 실험 진행 과정 시각화 끝
+```text
+x_l' = x_l + gamma_l * A_{op, config}(x_l)
+```
 
-- 🚀6/5
-  - nas로 폴더 옮겨서 실험 진행 > svr3에서 진행해보기
-  - CAMO 데이터셋으로 실험 진행 중 ✅
-  - 실험 돌아감 > loss랑 nas score 출력됨
-  - sam-b: 15152M 정도 차지함 ✅
-  - nas_score 뿐만 아니라 loss에 대한 점수도 고려할 수 있는 파이프라인 구축 필요
+One adapter candidate is selected and reused across the selected or weighted image-encoder layers.
 
-- 6/7
-  - 4만개의 sample을 모두 다루는 것은 말이 안됨
-  - 우선은 1000개를 random sampling 하여 선택하는 것으로 결정
+## Supported Backbones
 
-- 💦6/10
-  - CAMO 데이터셋에 대한 search 종료 ✅
-  - promise12 데이터셋 실험 가능하도록 구축 ✅
-  - CAMO 데이터셋 train 진행 ✅
-  - search.py 마지막에 저장하는 부분 오류 해결 ✅
-  - train.py 수정 ✅
-  - promise12 데이터셋 실험 진행
-    - image 크기가 256*256 이기 떄문인지? 에러 발생
-    -> 원래 sam은 1024 size에서만 구동된다 함 > 256*256에서는 사용이 안됨!!!
-  - camelyon 데이터셋을 1024 patch로 잘라서 사용해보기
+### SAM ViT-B
 
-- ⚾6/11
-  - sam-adapter의 vit-b 모델을 이용한 훈련
-  - 실험 결과> original model이 약간 더 높게 나옴
+Use the `repeated_adapter_sam` model with the SAM ViT-B image encoder.
 
-- ☕6/12
-  - polyp 데이터셋을 이용한 search 시작
+Example configs:
 
-- 🧋8/18
-  - alpha에 대한 parameter를 torch.abs()를 통해서 양수값으로만 연산하도록 변경
-  - 지난 실험(8/9) 에서 발생한 에러에 대한 해결이 필요함 -- 에러 발생하는 즉시 수정 갈기기
+```text
+configs/search_demo_v2.yaml
+configs/search_polyp_v2.yaml
+```
 
+### SAM2
 
-- 📮8/20
-  - broadcast로 인해서 발생하는 에러를 해결하기 위해 alpha, perturbed, delta 등의 값을 cuda로 옮겨서 broadcast 하는데 성공
-  - CAMO
-    - search iteration: 10, K: 5 로 줄인 값으로 실험
+Use the official `facebookresearch/sam2` repository under `third_party/sam2`.
+
+Example configs:
+
+```text
+configs/search_sam2_demo_v2.yaml
+configs/search_sam2_polyp_v2.yaml
+configs/search_sam2_smoke_v2.yaml
+configs/search_sam2_polyp_smoke_v2.yaml
+```
+
+SAM2 adapter insertion supports:
+
+```yaml
+adapter_insertion: auto    # Try block-level insertion, fallback when needed
+adapter_insertion: block   # Force SAM2 image-encoder block adapters
+adapter_insertion: feature # Apply repeated adapters after SAM2 image features
+```
+
+## Adapter Search Space
+
+ZAMs searches among lightweight residual adapter primitives:
+
+```text
+identity
+mlp
+gated_mlp
+dwconv
+low_rank
+frequency
+channel_attention
+edge_aware
+```
+
+Each primitive has operation-conditioned configuration fields. For example:
+
+```yaml
+operation_search_space:
+  mlp:
+    dim: [16, 32, 64, 128]
+    activation: [gelu, relu, silu]
+  gated_mlp:
+    dim: [16, 32, 64, 128]
+    gate: [geglu, swiglu]
+  low_rank:
+    rank: [4, 8, 16]
+  frequency:
+    dim: [16, 32, 64]
+    activation: [gelu, silu]
+    freq_mode: [avg_highpass, laplacian, token_smoothing]
+```
+
+Invalid fields are not perturbed or updated. For example, when `low_rank` is selected, only `rank` logits are used.
+
+## Search Algorithm
+
+The default search strategy is operation-conditioned hierarchical perturbation:
+
+1. Perturb operation logits `alpha_op`.
+2. Decode one operation by argmax.
+3. Perturb only the selected operation's valid configuration logits.
+4. Perturb layer-wise residual logits `alpha_layer`.
+5. Build a candidate model with the same adapter repeated across layers.
+6. Evaluate the candidate using a zero-shot proxy.
+7. Apply sparsity and parameter penalties.
+8. Update search logits with score-weighted perturbations.
+9. Export the best sampled architecture and the final alpha-decoded architecture.
+
+The default final selection is the best sampled architecture.
+
+## Environment Setup
+
+### SAM ViT-B Environment
+
+For the original SAM ViT-B experiments, use the existing AAS environment.
+
+```bash
+conda env update -n aas -f environment_aas.yml
+conda activate aas
+```
+
+### SAM2 Environment
+
+Official SAM2 requires a newer Python/PyTorch stack. Create a separate environment:
+
+```bash
+bash scripts/setup_sam2_env.sh aas-sam
+conda activate aas-sam
+```
+
+Download official SAM2 checkpoints and link them under `pretrained/`:
+
+```bash
+bash scripts/prepare_sam2_checkpoints.sh
+```
+
+The default SAM2 configs expect:
+
+```text
+pretrained/sam2.1_hiera_base_plus.pt
+```
+
+## Running Search
+
+### CAMO with SAM ViT-B
+
+```bash
+torchrun --nproc_per_node=1  search_up_v2.py \
+  --config configs/search_demo_v2.yaml \
+  --name v2_camo_search
+```
+
+### Kvasir-SEG with SAM ViT-B
+
+```bash
+torchrun --nproc_per_node=1  search_up_v2.py \
+  --config configs/search_polyp_v2.yaml \
+  --name v2_polyp_search
+```
+
+### CAMO with SAM2
+
+```bash
+torchrun --nproc_per_node=1  search_up_v2.py \
+  --config configs/search_sam2_demo_v2.yaml \
+  --name sam2_camo_search
+```
+
+### Kvasir-SEG with SAM2
+
+```bash
+torchrun --nproc_per_node=1  search_up_v2.py \
+  --config configs/search_sam2_polyp_v2.yaml \
+  --name sam2_polyp_search
+```
+
+## Training the Selected Adapter
+
+After search, train the best sampled architecture:
+
+```bash
+torchrun --nproc_per_node=1 --master_port=29511 train_v2.py \
+  --config save/v2_camo_search/best_arch_hierarchical_v2.yaml \
+  --name v2_camo_search_train
+```
+
+For SAM2 polyp:
+
+```bash
+torchrun --nproc_per_node=1 --master_port=29611 train_v2.py \
+  --config save/sam2_polyp_search/best_arch_hierarchical_v2.yaml \
+  --name sam2_polyp_search_train
+```
+
+Only adapter parameters are trainable. The SAM or SAM2 image encoder backbone remains frozen.
+
+## Evaluation
+
+```bash
+python test_v2.py \
+  --config save/v2_camo_search_train/config.yaml \
+  --model save/v2_camo_search_train/model_epoch_best.pth \
+  --dataset_key val_dataset \
+  --device cuda:0 \
+  --verbose
+```
+
+For polyp datasets:
+
+```bash
+python test_v2.py \
+  --config save/sam2_polyp_search_train/config.yaml \
+  --model save/sam2_polyp_search_train/model_epoch_best.pth \
+  --dataset_key test_dataset \
+  --device cuda:0 \
+  --verbose
+```

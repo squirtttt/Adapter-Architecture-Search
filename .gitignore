@@ -19,3 +19,9 @@ third_party/SAM2-Adapter-PyTorch/
 *.pyc
 __pycache__/
 *.py[cod]
+
+# output folder
+outputs/
+outputs_SAM/
+outputs_SAM_Adapter/
+outputs_worst/
