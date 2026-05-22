@@ -17,7 +17,10 @@ import models
 import models.repeated_adapter_sam
 import models.sam2_external
 import utils
-from models.mmseg.models.sam.image_encoder_v2 import count_adapter_params
+
+
+def count_adapter_params(module):
+    return sum(p.numel() for name, p in module.named_parameters() if "extended_adapters" in name)
 
 
 def estimate_adapter_macs(decoded, embed_dim=768, image_size=1024, patch_size=16):

@@ -1,0 +1,131 @@
+train_dataset:
+  dataset:
+    name: paired-image-folders
+    args:
+      root_path_1: ./load/Kvasir-SEG/images
+      root_path_2: ./load/Kvasir-SEG/masks
+      cache: none
+      split_key: train
+  wrapper:
+    name: train
+    args:
+      inp_size: 1024
+      augment: false
+  batch_size: 1
+
+val_dataset:
+  dataset:
+    name: paired-image-folders
+    args:
+      root_path_1: ./load/Kvasir-SEG-test/images
+      root_path_2: ./load/Kvasir-SEG-test/masks
+      cache: none
+      split_key: test
+  wrapper:
+    name: val
+    args:
+      inp_size: 1024
+  batch_size: 1
+
+test_dataset:
+  dataset:
+    name: paired-image-folders
+    args:
+      root_path_1: ./load/Kvasir-SEG-test/images
+      root_path_2: ./load/Kvasir-SEG-test/masks
+      cache: none
+      split_key: test
+  wrapper:
+    name: val
+    args:
+      inp_size: 1024
+  batch_size: 1
+
+eval_type: polyp
+sam_checkpoint:
+data_norm:
+  inp:
+    sub: [0.5]
+    div: [0.5]
+  gt:
+    sub: [0.5]
+    div: [0.5]
+
+model:
+  name: sam2_adapter
+  search_model_name: sam2_adapter_search
+  args:
+    inp_size: 1024
+    loss: iou
+    sam2:
+      config: configs/sam2.1/sam2.1_hiera_b+.yaml
+      checkpoint: ./pretrained/sam2.1_hiera_base_plus.pt
+      image_size: 1024
+      patch_size: 16
+      feature_dim: 256
+      prompt_embed_dim: 256
+      adapter_depth: 12
+      adapter_insertion: auto
+    adapter:
+      primitive_type: identity
+      dim:
+      activation:
+      gate:
+      rank:
+      freq_mode:
+      attention_type:
+      edge_mode:
+      search_mode: continuous_residual
+      gamma: [0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]
+
+optimizer:
+  name: adamw
+  args:
+    lr: 0.0002
+lr_min: 1.0e-7
+epoch_max: 120
+epoch_val: 1
+epoch_save: 1
+
+search:
+  search_strategy: hierarchical_perturbation
+  search_proxy: zico
+  search_mode: continuous_residual
+  N: 20
+  K: 5
+  max_proxy_batches: 500
+  max_zico_batches: 500
+  sigma_op: 1.0
+  sigma_config: 1.0
+  sigma_layer: 0.5
+  eta_op: 1.0
+  eta_config: 1.0
+  eta_layer: 2.0
+  tau: 0.5
+  lambda_gamma: 0.01
+  lambda_param: 0.0
+  identity_as_baseline: true
+  operation_search_space:
+    mlp:
+      dim: [16, 32, 64, 128]
+      activation: [gelu, relu, silu]
+    gated_mlp:
+      dim: [16, 32, 64, 128]
+      gate: [geglu, swiglu]
+    dwconv:
+      dim: [16, 32, 64, 128]
+      activation: [gelu, relu, silu]
+    low_rank:
+      rank: [4, 8, 16]
+    frequency:
+      dim: [16, 32, 64]
+      activation: [gelu, silu]
+      freq_mode: [avg_highpass, laplacian, token_smoothing]
+    channel_attention:
+      dim: [16, 32, 64]
+      activation: [gelu, silu]
+      attention_type: [se, eca]
+    edge_aware:
+      dim: [16, 32, 64]
+      activation: [gelu, silu]
+      edge_mode: [sobel, laplacian, dw_gradient]

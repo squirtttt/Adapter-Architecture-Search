@@ -5,7 +5,10 @@ import shutil
 import torch
 import numpy as np
 from torch.optim import SGD, Adam, AdamW
-from tensorboardX import SummaryWriter
+try:
+    from tensorboardX import SummaryWriter
+except ModuleNotFoundError:
+    from torch.utils.tensorboard import SummaryWriter
 
 import sod_metric
 class Averager():
