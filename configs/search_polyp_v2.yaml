@@ -42,7 +42,7 @@ test_dataset:
   batch_size: 1
 
 eval_type: polyp
-sam_checkpoint: ./pretrained/medsam_vit_b.pth
+sam_checkpoint: ./pretrained/sam_vit_b_01ec64.pth
 data_norm:
   inp:
     sub: [0.5]
@@ -70,16 +70,16 @@ model:
       num_heads: 12
       global_attn_indexes: [2, 5, 8, 11]
       extended_adapter:
-        primitive_type: identity
-        dim:
-        activation:
+        primitive_type: mlp
+        dim: 32
+        activation: gelu
         gate:
         rank:
         freq_mode:
         attention_type:
         edge_mode:
-        search_mode: continuous
-        gamma: [0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]
+        search_mode: hard
+        gamma: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
 
 optimizer:
   name: adamw
@@ -94,12 +94,12 @@ search:
   search_strategy: hierarchical_perturbation  # options: original_zaas, random_candidate, hierarchical_perturbation
   search_proxy: zico # options: zico, naswot
   search_mode: continuous_residual # options: continuous_residual, hard_insertion
-  N: 20
+  N: 10
   K: 5
   max_proxy_batches: 500
   max_zico_batches: 500
-  sigma_op: 0.1
-  sigma_config: 0.1
+  sigma_op: 1.0
+  sigma_config: 1.0
   sigma_layer: 0.5
   eta_op: 1.0
   eta_config: 1.0
